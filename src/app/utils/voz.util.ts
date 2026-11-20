@@ -95,8 +95,9 @@ const PRONUNCIACION: ReadonlyArray<[RegExp, string]> = [
   [/(?<!\p{L})want[aá]nes(?!\p{L})/giu, 'guantanes'],
   [/(?<!\p{L})want[aá]n(?!\p{L})/giu, 'guantán'],
   [/(?<!\p{L})ka[iy](?!\p{L})/giu, 'cai'],
-  // Nombre del asistente: la voz leía "Mei" como "Ma"; "Mey" se pronuncia /méi/ en una sílaba (como "rey").
-  [/(?<!\p{L})mei(?!\p{L})/giu, 'Mey']
+  // Nombre del asistente: la voz leía "Mei" como "Ma" ("Mey" suena idéntico); con tilde, "Méi",
+  // el acento recae en la "e" y se oye /méi/ (variante elegida al escuchar la voz Sabina).
+  [/(?<!\p{L})mei(?!\p{L})/giu, 'Méi']
 ];
 
 /**

@@ -69,8 +69,8 @@ test('no modifica palabras que ya se pronuncian bien ni partes de otras palabras
 });
 
 test('el nombre del asistente "Mei" se pronuncia en una sílaba, sin tocar otras palabras', () => {
-  assert.equal(textoParaVoz('¡Hola! Soy Mei, tu asistente.'), '¡Hola! Soy Mey, tu asistente.');
-  assert.equal(textoParaVoz('Pídele a MEI'), 'Pídele a Mey');
+  assert.equal(textoParaVoz('¡Hola! Soy Mei, tu asistente.'), '¡Hola! Soy Méi, tu asistente.');
+  assert.equal(textoParaVoz('Pídele a MEI'), 'Pídele a Méi');
   assert.equal(textoParaVoz('Meiji, Meister y remeis'), 'Meiji, Meister y remeis');
 });
 
