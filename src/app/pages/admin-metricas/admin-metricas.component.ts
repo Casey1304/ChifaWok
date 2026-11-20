@@ -1,23 +1,27 @@
-import { Component } from '@angular/core';
+import { Component, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AdminSidebarComponent } from '../../components/admin-sidebar/admin-sidebar.component';
 import { MetricasService } from '../../services/metricas.service';
 import { VoiceAiService } from '../../services/voice-ai.service';
 import { NotificationService } from '../../services/notification.service';
 import { SesionVoz } from '../../models/sesion-voz.model';
+import { PedidosService } from '../../services/pedidos.service';
+import { ProductosService } from '../../services/productos.service';
+import { Router } from '@angular/router';
+import { descargarCsv } from '../../utils/csv.util';
 
 @Component({
   selector: 'app-admin-metricas',
   standalone: true,
   imports: [CommonModule, AdminSidebarComponent],
   template: `
-    <div class="flex h-screen overflow-hidden bg-background">
+    <div class="flex flex-col lg:flex-row h-screen overflow-hidden bg-background">
       <app-admin-sidebar></app-admin-sidebar>
 
-      <main class="flex-1 flex flex-col h-screen overflow-y-auto bg-background custom-scroll">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col lg:h-screen overflow-y-auto bg-background custom-scroll">
         
         <!-- Header (Matches Stitch screen) -->
-        <header class="bg-surface border-b border-outline-variant/30 px-8 py-5 sticky top-0 z-20 shadow-xs">
+        <header class="bg-surface border-b border-outline-variant/30 px-4 sm:px-8 py-4 sm:py-5 sticky top-0 z-20 shadow-xs">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div class="flex items-center gap-2">
@@ -38,7 +42,7 @@ import { SesionVoz } from '../../models/sesion-voz.model';
                 class="px-3.5 py-2 rounded-xl border border-outline-variant hover:bg-surface-container text-xs font-bold text-on-surface flex items-center gap-1.5 transition-colors"
               >
                 <span class="material-symbols-outlined text-base">download</span>
-                <span>Descargar Reporte</span>
+                <span>Descargar Reporte (CSV)</span>
               </button>
               <button
                 (click)="configurarVocabulario()"
@@ -51,19 +55,18 @@ import { SesionVoz } from '../../models/sesion-voz.model';
           </div>
         </header>
 
-        <div class="p-8 space-y-6 max-w-[1440px] w-full">
+        <div class="p-4 sm:p-8 space-y-6 max-w-[1440px] w-full">
           
-          <!-- TOP 4 KPI CARDS (Matches Stitch) -->
+          <!-- TOP 4 KPI CARDS (datos calculados de sesiones y pedidos) -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            
             <div class="p-4 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs space-y-1">
               <div class="flex items-center justify-between text-xs text-on-surface-variant">
-                <span class="font-bold uppercase tracking-wider text-[11px]">Precisión Fonética Wok</span>
+                <span class="font-bold uppercase tracking-wider text-[11px]">Precisión del Reconocimiento</span>
                 <span class="material-symbols-outlined text-primary text-lg">graphic_eq</span>
               </div>
-              <p class="font-display-lg text-3xl font-black text-on-surface">98.4%</p>
-              <span class="text-[10px] text-emerald-700 font-bold block">
-                ↗ +1.2% vs promedio en ruido de cocina
+              <p class="font-display-lg text-3xl font-black text-on-surface">{{ metricasService.precisionPromedio() }}%</p>
+              <span class="text-[10px] text-on-surface-variant font-bold block">
+                Confianza media en {{ metricasService.totalSesiones() }} sesiones de voz
               </span>
             </div>
 
@@ -72,37 +75,36 @@ import { SesionVoz } from '../../models/sesion-voz.model';
                 <span class="font-bold uppercase tracking-wider text-[11px]">Tiempo Promedio de Orden</span>
                 <span class="material-symbols-outlined text-secondary text-lg">timer</span>
               </div>
-              <p class="font-display-lg text-3xl font-black text-on-surface">42 seg</p>
-              <span class="text-[10px] text-emerald-700 font-bold block">
-                ⚡ 5x más rápido que llamada tradicional (3.5 min)
+              <p class="font-display-lg text-3xl font-black text-on-surface">{{ metricasService.duracionPromedio() }} seg</p>
+              <span class="text-[10px] text-on-surface-variant font-bold block">
+                Desde que Mei empieza a escuchar hasta interpretar
               </span>
             </div>
 
             <div class="p-4 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs space-y-1">
               <div class="flex items-center justify-between text-xs text-on-surface-variant">
-                <span class="font-bold uppercase tracking-wider text-[11px]">Upselling Exitoso</span>
+                <span class="font-bold uppercase tracking-wider text-[11px]">Conversión a Pedido</span>
                 <span class="material-symbols-outlined text-tertiary text-lg">shopping_cart_checkout</span>
               </div>
-              <p class="font-display-lg text-3xl font-black text-on-surface">34.2%</p>
-              <span class="text-[10px] text-emerald-700 font-bold block">
-                ↗ +8.4% wantán, bebidas y porción extra
+              <p class="font-display-lg text-3xl font-black text-on-surface">{{ metricasService.tasaConversion() }}%</p>
+              <span class="text-[10px] text-on-surface-variant font-bold block">
+                {{ metricasService.sesionesConPedido() }} sesiones terminaron en pedido
               </span>
             </div>
 
             <div class="p-4 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs space-y-1">
               <div class="flex items-center justify-between text-xs text-on-surface-variant">
-                <span class="font-bold uppercase tracking-wider text-[11px]">Llamadas Simultáneas</span>
-                <span class="material-symbols-outlined text-emerald-600 text-lg">call</span>
+                <span class="font-bold uppercase tracking-wider text-[11px]">Pedidos por Voz</span>
+                <span class="material-symbols-outlined text-emerald-600 text-lg">record_voice_over</span>
               </div>
               <div class="flex items-baseline gap-2">
-                <p class="font-display-lg text-3xl font-black text-emerald-700">6 activas</p>
-                <span class="text-xs text-on-surface-variant">/ 184 hoy</span>
+                <p class="font-display-lg text-3xl font-black text-emerald-700">{{ metricasService.pedidosPorVoz() }}</p>
+                <span class="text-xs text-on-surface-variant">/ {{ pedidosVigentes() }} pedidos vigentes</span>
               </div>
               <span class="text-[10px] text-on-surface-variant font-medium block">
-                0 llamadas perdidas en espera
+                Interpretación sin aclaraciones: {{ metricasService.tasaExitoVoiceAI() }}%
               </span>
             </div>
-
           </div>
 
           <!-- 2-COLUMN MAIN LAYOUT -->
@@ -111,35 +113,44 @@ import { SesionVoz } from '../../models/sesion-voz.model';
             <!-- LEFT 2 COLUMNS: Active Live Call & Transcriptions -->
             <div class="lg:col-span-2 space-y-6">
               
-              <!-- ACTIVE LIVE CALL CARD (Matches Stitch screen) -->
+              <!-- ÚLTIMA SESIÓN DE VOZ (dato real más reciente) -->
               <div class="p-5 rounded-2xl bg-surface border-2 border-primary/30 shadow-xs space-y-4">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-surface-container pb-3">
-                  <div class="flex items-center gap-2.5">
-                    <span class="w-3 h-3 rounded-full bg-red-600 animate-ping"></span>
-                    <span class="font-display-lg text-base font-black text-on-surface">Llamada en Curso #CW-928</span>
-                    <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold">
-                      Mesa 4 & Delivery
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-3 text-xs">
-                    <span class="font-mono font-bold text-primary">00:38 / Live</span>
-                    <span class="text-emerald-700 font-bold">Confianza: 99.1%</span>
-                  </div>
-                </div>
-
-                <div class="p-3.5 rounded-xl bg-surface-container-low border border-surface-container space-y-2">
-                  <div class="flex items-center justify-between text-[11px] text-on-surface-variant">
-                    <span class="flex items-center gap-1 font-semibold">
-                      <span class="material-symbols-outlined text-xs text-primary">sound_detection_loud_sound</span>
-                      Captura Acústica de Voz + Cancelación Wok Sizzle (42dB)
-                    </span>
-                    <span class="font-mono text-emerald-700 font-bold">FILTRO ACTIVO</span>
+                <ng-container *ngIf="metricasService.sesiones()[0] as ultima; else sinSesiones">
+                  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-surface-container pb-3">
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+                      <span class="font-display-lg text-base font-black text-on-surface">Última Sesión de Voz {{ ultima.codigo_llamada }}</span>
+                      <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold">
+                        {{ ultima.ubicacion }}
+                      </span>
+                    </div>
+                    <div class="flex items-center gap-3 text-xs">
+                      <span class="font-mono font-bold text-primary">{{ ultima.fecha }} {{ ultima.hora }}</span>
+                      <span class="text-emerald-700 font-bold">Confianza: {{ ultima.confianza }}%</span>
+                    </div>
                   </div>
 
-                  <p class="text-xs text-on-surface font-medium italic leading-relaxed">
-                    <strong>Cliente en vivo:</strong> "...y también agrégale una porción de wantán frito bien doradito con su tamarindo por favor..."
-                  </p>
-                </div>
+                  <div class="p-3.5 rounded-xl bg-surface-container-low border border-surface-container space-y-2">
+                    <div class="flex items-center justify-between text-[11px] text-on-surface-variant">
+                      <span class="flex items-center gap-1 font-semibold">
+                        <span class="material-symbols-outlined text-xs text-primary">person</span>
+                        {{ ultima.cliente_nombre }}
+                      </span>
+                      <span class="font-mono font-bold" [ngClass]="ultima.pedido_asociado_codigo ? 'text-emerald-700' : 'text-amber-700'">
+                        {{ ultima.pedido_asociado_codigo ? 'PEDIDO ' + ultima.pedido_asociado_codigo : (ultima.exitosa ? 'SIN CONFIRMAR' : 'ACLARACIÓN') }}
+                      </span>
+                    </div>
+                    <p class="text-xs text-on-surface font-medium italic leading-relaxed">
+                      <strong>Comensal:</strong> "{{ ultima.transcripcion_usuario }}"
+                    </p>
+                    <p class="text-xs text-on-surface-variant leading-relaxed">
+                      <strong>Mei:</strong> {{ ultima.respuesta_mei }}
+                    </p>
+                  </div>
+                </ng-container>
+                <ng-template #sinSesiones>
+                  <p class="text-xs text-on-surface-variant italic">Aún no hay sesiones de voz registradas.</p>
+                </ng-template>
               </div>
 
               <!-- TRANSCRIPCIONES & REGISTRO DE ÓRDENES TABLE -->
@@ -169,7 +180,8 @@ import { SesionVoz } from '../../models/sesion-voz.model';
                         <span class="font-black text-on-surface">{{ s.codigo_llamada }} • {{ s.ubicacion }}</span>
                       </div>
                       <div class="flex items-center gap-3 text-xs text-on-surface-variant">
-                        <span>{{ s.hace_tiempo }}</span>
+                        <span>{{ s.fecha }} {{ s.hora }}</span>
+                        <span *ngIf="s.pedido_asociado_codigo" class="font-bold text-primary">Pedido {{ s.pedido_asociado_codigo }}</span>
                         <span>Duración: {{ s.duracion_segundos }}s</span>
                         <span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold">
                           ✓ {{ s.confianza }}% Confianza
@@ -185,7 +197,7 @@ import { SesionVoz } from '../../models/sesion-voz.model';
                       <div class="pt-2 border-t border-surface-container flex flex-wrap items-center justify-between gap-2 text-[11px]">
                         <div>
                           <span class="font-bold text-on-surface-variant">Platos identificados: </span>
-                          <strong class="text-primary">{{ s.platos_identificados.join(', ') }}</strong>
+                          <strong class="text-primary">{{ s.platos_identificados.length ? s.platos_identificados.join(', ') : 'Ninguno (aclaración)' }}</strong>
                         </div>
                         <div *ngIf="s.modificadores_jerga && s.modificadores_jerga.length > 0">
                           <span class="font-bold text-on-surface-variant">Jerga detectada: </span>
@@ -208,14 +220,16 @@ import { SesionVoz } from '../../models/sesion-voz.model';
               <div class="p-5 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs space-y-4">
                 <div class="flex items-center justify-between">
                   <h3 class="font-headline-md text-base font-bold text-on-surface">Platos más Pedidos por Voz</h3>
-                  <span class="text-[11px] text-on-surface-variant font-bold">Turno Hoy</span>
+                  <span class="text-[11px] text-on-surface-variant font-bold">Unidades</span>
                 </div>
-
                 <div class="space-y-3">
-                  <div *ngFor="let p of dashboard.platos_mas_pedidos_voz" class="space-y-1">
+                  <p *ngIf="metricasService.platosMasPedidosVoz().length === 0" class="text-xs text-on-surface-variant italic">
+                    Aún no hay pedidos registrados por voz.
+                  </p>
+                  <div *ngFor="let p of metricasService.platosMasPedidosVoz()" class="space-y-1">
                     <div class="flex justify-between text-xs font-semibold">
                       <span class="text-on-surface">{{ p.nombre }}</span>
-                      <span class="text-on-surface-variant">{{ p.porcentaje }}% ({{ p.pedidos }} ped.)</span>
+                      <span class="text-on-surface-variant">{{ p.porcentaje }}% ({{ p.cantidad }} und.)</span>
                     </div>
                     <div class="w-full bg-surface-container h-2 rounded-full overflow-hidden">
                       <div class="bg-primary h-full rounded-full" [style.width]="p.porcentaje + '%'"></div>
@@ -228,73 +242,92 @@ import { SesionVoz } from '../../models/sesion-voz.model';
               <div class="p-5 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs space-y-4">
                 <div>
                   <h3 class="font-headline-md text-base font-bold text-on-surface">Modificadores y Jerga Chifa</h3>
-                  <p class="text-xs text-on-surface-variant mt-0.5">Reconocimiento léxico peruano adaptado al Wok.</p>
+                  <p class="text-xs text-on-surface-variant mt-0.5">Detectados por Mei en las sesiones registradas.</p>
                 </div>
-
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                  <div *ngFor="let j of dashboard.jerga_chifa_frecuente" class="p-2.5 rounded-xl bg-surface-container-low border border-surface-container space-y-0.5">
-                    <div class="flex justify-between items-center">
-                      <span class="font-black text-primary">"{{ j.termino }}"</span>
+                <p *ngIf="metricasService.jergaFrecuente().length === 0" class="text-xs text-on-surface-variant italic">
+                  Sin modificadores detectados todavía.
+                </p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div *ngFor="let j of metricasService.jergaFrecuente()" class="p-2.5 rounded-xl bg-surface-container-low border border-surface-container space-y-0.5">
+                    <div class="flex justify-between items-center gap-2">
+                      <span class="font-black text-primary">{{ j.termino }}</span>
                       <span class="text-[10px] font-mono font-bold text-on-surface-variant">{{ j.frecuencia }}x</span>
                     </div>
-                    <p class="text-[10px] text-on-surface-variant leading-tight">{{ j.significado }}</p>
                   </div>
                 </div>
               </div>
 
-              <!-- EFECTIVIDAD DE RECOMENDACIONES (UPSELL) -->
+              <!-- PEDIDOS POR CANAL -->
               <div class="p-5 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs space-y-4">
                 <div class="flex items-center justify-between">
-                  <h3 class="font-headline-md text-base font-bold text-on-surface">Efectividad de Recomendaciones</h3>
-                  <span class="text-[11px] text-emerald-700 font-black">+S/ 2,168.00 hoy</span>
+                  <h3 class="font-headline-md text-base font-bold text-on-surface">Pedidos por Canal</h3>
+                  <span class="text-[11px] text-on-surface-variant font-bold">Sin cancelados</span>
                 </div>
-
                 <div class="space-y-3">
-                  <div *ngFor="let rec of dashboard.efectividad_recomendaciones" class="p-3 rounded-xl bg-surface-container-low border border-surface-container space-y-1 text-xs">
+                  <div *ngFor="let c of metricasService.pedidosPorCanal()" class="p-3 rounded-xl bg-surface-container-low border border-surface-container space-y-1 text-xs">
                     <div class="flex justify-between items-center font-bold">
-                      <span class="text-on-surface">{{ rec.producto }}</span>
-                      <span class="text-emerald-700">{{ rec.porcentaje }}%</span>
+                      <span class="text-on-surface">{{ c.canal }}</span>
+                      <span class="text-emerald-700">{{ c.porcentaje }}%</span>
                     </div>
                     <div class="flex justify-between text-[11px] text-on-surface-variant">
-                      <span>{{ rec.sugerencias }} sugerencias • {{ rec.aceptadas }} aceptadas</span>
-                      <span class="font-bold text-on-surface">+S/ {{ rec.ingreso_adicional.toFixed(2) }}</span>
+                      <span>{{ c.pedidos }} pedidos</span>
+                      <span class="font-bold text-on-surface">S/ {{ c.ingresos.toFixed(2) }}</span>
                     </div>
                   </div>
                 </div>
               </div>
-
             </div>
-
           </div>
-
         </div>
-
       </main>
 
     </div>
   `
 })
 export class AdminMetricasComponent {
-  dashboard!: ReturnType<MetricasService['getDashboardData']>;
+  readonly pedidosVigentes = computed(() =>
+    this.pedidosService.pedidos().filter(p => p.estado !== 'cancelado').length
+  );
 
   constructor(
     public metricasService: MetricasService,
+    private pedidosService: PedidosService,
+    private productosService: ProductosService,
     private voice: VoiceAiService,
-    private notification: NotificationService
-  ) {
-    this.dashboard = this.metricasService.getDashboardData();
-  }
+    private notification: NotificationService,
+    private router: Router
+  ) {}
 
   reproducirAudio(s: SesionVoz): void {
     this.voice.speak(s.transcripcion_usuario);
-    this.notification.info('Reproduciendo Voz', `Sintetizando audio para ${s.codigo_llamada}`);
+    this.notification.info('Reproduciendo transcripción', `Lectura en voz alta de ${s.codigo_llamada}.`);
   }
 
+  /** Exporta las sesiones de voz registradas a CSV. */
   descargarReporte(): void {
-    this.notification.success('Reporte Generado', 'Métricas de Voice AI exportadas a PDF.');
+    const sesiones = this.metricasService.sesiones();
+    if (sesiones.length === 0) {
+      this.notification.warning('Sin datos', 'Aún no hay sesiones de voz para exportar.');
+      return;
+    }
+    descargarCsv(`chifawok-sesiones-voz-${new Date().toISOString().split('T')[0]}.csv`, [
+      ['Código', 'Fecha', 'Hora', 'Comensal', 'Canal', 'Transcripción', 'Platos identificados', 'Confianza (%)', 'Duración (s)', 'Pedido', 'Estado'],
+      ...sesiones.map(s => [
+        s.codigo_llamada, s.fecha, s.hora, s.cliente_nombre, s.ubicacion, s.transcripcion_usuario,
+        s.platos_identificados.join(', '), s.confianza, s.duracion_segundos, s.pedido_asociado_codigo || '', s.estado
+      ])
+    ]);
+    this.notification.success('Reporte descargado', `${sesiones.length} sesiones de voz exportadas a CSV.`);
   }
 
+  /** El vocabulario de Mei son los nombres y sinónimos de voz de cada plato. */
   configurarVocabulario(): void {
-    this.notification.info('Vocabulario Wok', 'Diccionario fonético actualizado con 124 términos chiferos.');
+    const terminos = this.productosService.productos()
+      .reduce((n, p) => n + 1 + (p.sinonimos_voz || []).length, 0);
+    this.notification.info(
+      'Vocabulario de Mei',
+      `Mei reconoce ${terminos} términos (nombres y sinónimos de voz). Edítalos en cada plato de Gestión de Productos.`
+    );
+    this.router.navigate(['/admin/productos']);
   }
 }

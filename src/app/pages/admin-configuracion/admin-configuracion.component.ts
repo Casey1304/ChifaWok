@@ -11,13 +11,13 @@ import { NotificationService } from '../../services/notification.service';
   standalone: true,
   imports: [CommonModule, FormsModule, AdminSidebarComponent],
   template: `
-    <div class="flex h-screen overflow-hidden bg-background">
+    <div class="flex flex-col lg:flex-row h-screen overflow-hidden bg-background">
       <app-admin-sidebar></app-admin-sidebar>
 
-      <main class="flex-1 flex flex-col h-screen overflow-y-auto bg-background custom-scroll">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col lg:h-screen overflow-y-auto bg-background custom-scroll">
         
         <!-- Header -->
-        <header class="bg-surface border-b border-outline-variant/30 px-8 py-5 sticky top-0 z-20 shadow-xs">
+        <header class="bg-surface border-b border-outline-variant/30 px-4 sm:px-8 py-4 sm:py-5 sticky top-0 z-20 shadow-xs">
           <div>
             <span class="text-xs font-bold uppercase tracking-wider text-primary">Arquitectura & Conectividad</span>
             <h1 class="font-display-lg text-2xl font-black text-on-surface mt-0.5">
@@ -26,7 +26,7 @@ import { NotificationService } from '../../services/notification.service';
           </div>
         </header>
 
-        <div class="p-8 space-y-6 max-w-4xl w-full">
+        <div class="p-4 sm:p-8 space-y-6 max-w-4xl w-full">
           
           <!-- Mode Status Card -->
           <div class="p-6 rounded-2xl bg-amber-50 border border-amber-300 shadow-xs space-y-3">
@@ -131,8 +131,8 @@ import { NotificationService } from '../../services/notification.service';
               <div class="p-3.5 rounded-xl bg-surface-container-low border border-surface-container space-y-1">
                 <div class="flex justify-between items-center">
                   <span class="font-bold text-on-surface">SpeechSynthesis (TTS)</span>
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                    ✓ Soportado
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold" [ngClass]="ttsSoportado ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'">
+                    {{ ttsSoportado ? '✓ Soportado' : '✗ No disponible' }}
                   </span>
                 </div>
                 <p class="text-[11px] text-on-surface-variant">Confirmación auditiva hablada para las respuestas de Mei.</p>
@@ -162,9 +162,12 @@ import { NotificationService } from '../../services/notification.service';
   `
 })
 export class AdminConfiguracionComponent {
+  private readonly URLS_KEY = 'config_backend_urls';
+
   springBootUrl = 'http://localhost:8080/api/v1';
   fastApiUrl = 'http://localhost:8000';
 
+  readonly ttsSoportado = typeof window !== 'undefined' && 'speechSynthesis' in window;
   readonly isTesting = signal<boolean>(false);
   readonly resultadoTest = signal<string | null>(null);
   readonly resultadoExito = signal<boolean>(false);
@@ -173,23 +176,37 @@ export class AdminConfiguracionComponent {
     public voice: VoiceAiService,
     private storage: StorageService,
     private notification: NotificationService
-  ) {}
+  ) {
+    const guardadas = this.storage.get<{ springBootUrl?: string; fastApiUrl?: string } | null>(this.URLS_KEY, null);
+    if (guardadas?.springBootUrl) this.springBootUrl = guardadas.springBootUrl;
+    if (guardadas?.fastApiUrl) this.fastApiUrl = guardadas.fastApiUrl;
+  }
 
-  testConectividad(): void {
+  /**
+   * Intenta contactar realmente la URL configurada (timeout de 3 s).
+   * Este frontend aún no consume esa API: los datos siguen en LocalStorage.
+   */
+  async testConectividad(): Promise<void> {
+    const url = this.springBootUrl.trim();
+    this.storage.set(this.URLS_KEY, { springBootUrl: url, fastApiUrl: this.fastApiUrl.trim() });
     this.isTesting.set(true);
     this.resultadoTest.set(null);
 
-    setTimeout(() => {
-      this.isTesting.set(false);
+    const controlador = new AbortController();
+    const temporizador = setTimeout(() => controlador.abort(), 3000);
+    try {
+      await fetch(url, { mode: 'no-cors', signal: controlador.signal, cache: 'no-store' });
+      this.resultadoExito.set(true);
+      this.resultadoTest.set(`El servidor respondió en ${url}. La aplicación sigue usando LocalStorage: la integración REST aún no está implementada en el frontend.`);
+      this.notification.success('Servidor alcanzable', 'Se obtuvo respuesta del backend configurado.');
+    } catch {
       this.resultadoExito.set(false);
-      this.resultadoTest.set(
-        'Servidor Spring Boot no detectado en ' + this.springBootUrl + '. Operando en Modo Demostración funcional con LocalStorage.'
-      );
-      this.notification.info(
-        'Verificación de Conectividad',
-        'Backend no disponible actualmente. Modo demostración activo.'
-      );
-    }, 800);
+      this.resultadoTest.set(`Sin respuesta de ${url}. La aplicación funciona en modo demostración con LocalStorage.`);
+      this.notification.info('Backend no disponible', 'Modo demostración activo con datos locales.');
+    } finally {
+      clearTimeout(temporizador);
+      this.isTesting.set(false);
+    }
   }
 
   resetDemo(): void {

@@ -12,13 +12,13 @@ import { coincideBusqueda } from '../../utils/texto.util';
   standalone: true,
   imports: [CommonModule, FormsModule, ReactiveFormsModule, AdminSidebarComponent],
   template: `
-    <div class="flex h-screen overflow-hidden bg-background">
+    <div class="flex flex-col lg:flex-row h-screen overflow-hidden bg-background">
       <app-admin-sidebar></app-admin-sidebar>
 
-      <main class="flex-1 flex flex-col h-screen overflow-y-auto bg-background custom-scroll">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col lg:h-screen overflow-y-auto bg-background custom-scroll">
         
         <!-- Header -->
-        <header class="bg-surface border-b border-outline-variant/30 px-8 py-5 sticky top-0 z-20 shadow-xs">
+        <header class="bg-surface border-b border-outline-variant/30 px-4 sm:px-8 py-4 sm:py-5 sticky top-0 z-20 shadow-xs">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span class="text-xs font-bold uppercase tracking-wider text-primary">Gestión de Catálogo al Wok</span>
@@ -39,7 +39,7 @@ import { coincideBusqueda } from '../../utils/texto.util';
           </div>
         </header>
 
-        <div class="p-8 space-y-6 max-w-[1440px] w-full">
+        <div class="p-4 sm:p-8 space-y-6 max-w-[1440px] w-full">
           
           <!-- KPI Stats Bar (Matches Stitch screen) -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
