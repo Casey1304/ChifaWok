@@ -94,7 +94,9 @@ const PRONUNCIACION: ReadonlyArray<[RegExp, string]> = [
   [/(?<!\p{L})kola(s?)(?!\p{L})/giu, 'cola$1'],
   [/(?<!\p{L})want[aá]nes(?!\p{L})/giu, 'guantanes'],
   [/(?<!\p{L})want[aá]n(?!\p{L})/giu, 'guantán'],
-  [/(?<!\p{L})ka[iy](?!\p{L})/giu, 'cai']
+  [/(?<!\p{L})ka[iy](?!\p{L})/giu, 'cai'],
+  // Nombre del asistente: la voz leía "Mei" como "Ma"; "Mey" se pronuncia /méi/ en una sílaba (como "rey").
+  [/(?<!\p{L})mei(?!\p{L})/giu, 'Mey']
 ];
 
 /**

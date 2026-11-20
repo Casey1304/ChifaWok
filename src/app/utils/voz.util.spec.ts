@@ -68,6 +68,12 @@ test('no modifica palabras que ya se pronuncian bien ni partes de otras palabras
   assert.equal(textoParaVoz('kayak, Kaiser, Kolaboración'), 'kayak, Kaiser, Kolaboración');
 });
 
+test('el nombre del asistente "Mei" se pronuncia en una sílaba, sin tocar otras palabras', () => {
+  assert.equal(textoParaVoz('¡Hola! Soy Mei, tu asistente.'), '¡Hola! Soy Mey, tu asistente.');
+  assert.equal(textoParaVoz('Pídele a MEI'), 'Pídele a Mey');
+  assert.equal(textoParaVoz('Meiji, Meister y remeis'), 'Meiji, Meister y remeis');
+});
+
 test('montos, códigos y litros se leen de forma natural', () => {
   assert.equal(textoParaVoz('Tu pedido suma S/ 86.00.'), 'Tu pedido suma 86 soles.');
   assert.equal(textoParaVoz('Total: S/ 62.50'), 'Total: 62 soles con 50 céntimos');
