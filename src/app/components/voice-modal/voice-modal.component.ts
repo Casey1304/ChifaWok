@@ -56,7 +56,9 @@ import { NotificationService } from '../../services/notification.service';
                     'bg-emerald-100 text-emerald-800 border border-emerald-300': voice.voiceState() === 'listening',
                     'bg-blue-100 text-blue-800': voice.voiceState() === 'speaking',
                     'bg-amber-100 text-amber-800': voice.voiceState() === 'processing',
-                    'bg-surface-container text-on-surface-variant': voice.voiceState() === 'idle' || voice.voiceState() === 'ready_to_confirm',
+                    'bg-surface-container text-on-surface-variant': voice.voiceState() === 'idle',
+                    'bg-emerald-100 text-emerald-800': voice.voiceState() === 'ready_to_confirm',
+                    'bg-amber-100 text-amber-900': voice.voiceState() === 'clarification',
                     'bg-red-100 text-red-800': voice.voiceState() === 'error'
                   }"
                 >
@@ -75,7 +77,9 @@ import { NotificationService } from '../../services/notification.service';
           </div>
 
           <button
+            type="button"
             (click)="voice.closeModal()"
+            aria-label="Cerrar asistente Mei"
             class="text-on-surface-variant hover:text-on-surface p-1.5 rounded-full hover:bg-surface-container transition-colors"
           >
             <span class="material-symbols-outlined text-xl">close</span>
@@ -104,9 +108,20 @@ import { NotificationService } from '../../services/notification.service';
             </div>
           </div>
 
+          <!-- Navegador sin Web Speech API -->
+          <div *ngIf="!voice.isBrowserSupported()" class="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-amber-600 shrink-0 text-lg">mic_off</span>
+            <p>
+              Este navegador no ofrece reconocimiento de voz. Para hablar con Mei usa <strong>Google Chrome</strong> o
+              <strong>Microsoft Edge</strong> (con conexión a Internet). Mientras tanto, puedes escribir tu pedido abajo.
+            </p>
+          </div>
+
           <!-- User Spoken / Typed Input -->
           <div *ngIf="voice.transcript()" class="flex flex-col items-end gap-1">
-            <span class="font-label-sm text-[11px] text-on-surface-variant font-semibold">Tú</span>
+            <span class="font-label-sm text-[11px] text-on-surface-variant font-semibold">
+              Tú · {{ voice.entradaPorVoz() ? '🎙️ reconocido por voz' : '⌨️ escrito' }}
+            </span>
             <div class="bg-surface-container-highest px-4 py-3 rounded-2xl rounded-tr-xs max-w-[85%] border border-surface-variant/60 shadow-xs">
               <p class="text-sm font-medium text-on-surface">"{{ voice.transcript() }}"</p>
             </div>
@@ -144,8 +159,11 @@ import { NotificationService } from '../../services/notification.service';
                 <span class="material-symbols-outlined text-primary text-xl">fact_check</span>
                 <span class="font-bold text-sm text-on-surface">Resumen Interpretado por Mei</span>
               </div>
-              <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-black text-[11px]">
-                Validado con la Carta
+              <span
+                class="px-2 py-0.5 rounded-full font-black text-[11px]"
+                [ngClass]="order.avisos.length === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
+              >
+                {{ order.avisos.length === 0 ? 'Validado con la Carta' : 'Requiere revisión' }}
               </span>
             </div>
 
@@ -163,6 +181,15 @@ import { NotificationService } from '../../services/notification.service';
                 </div>
                 <span class="font-bold text-on-surface">S/ {{ item.subtotal.toFixed(2) }}</span>
               </div>
+            </div>
+
+            <!-- Avisos: no reconocidos, no disponibles, ambiguos -->
+            <div *ngIf="order.avisos.length > 0" class="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] space-y-1">
+              <p class="font-bold flex items-center gap-1">
+                <span class="material-symbols-outlined text-sm">help</span>
+                Revisa antes de confirmar
+              </p>
+              <p *ngFor="let a of order.avisos">{{ a }}</p>
             </div>
 
             <!-- Modifiers / Slang Badges -->
@@ -183,7 +210,10 @@ import { NotificationService } from '../../services/notification.service';
             <!-- Price Breakdown -->
             <div class="pt-2 border-t border-outline-variant/30 flex items-center justify-between">
               <div>
-                <span class="text-xs text-on-surface-variant">Total del Pedido (inc. IGV):</span>
+                <span class="text-xs text-on-surface-variant">
+                  Incluye IGV (18%): S/ {{ order.impuestos.toFixed(2) }}
+                </span>
+                <span class="block text-xs text-on-surface-variant">Total del Pedido:</span>
                 <p class="font-display-lg text-lg font-black text-primary">S/ {{ order.total.toFixed(2) }}</p>
               </div>
               <div class="text-right text-[11px] text-on-surface-variant">
@@ -215,6 +245,10 @@ import { NotificationService } from '../../services/notification.service';
             </button>
           </form>
 
+          <p *ngIf="voice.interpretedOrder() && !esComensal()" class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Para registrar el pedido debes iniciar sesión como comensal. Al confirmar, los platos se guardarán en tu carrito.
+          </p>
+
           <!-- Action Buttons Bar -->
           <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
             
@@ -222,13 +256,15 @@ import { NotificationService } from '../../services/notification.service';
             <button
               type="button"
               (click)="toggleListening()"
-              class="w-full sm:w-auto px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
+              [disabled]="!voice.isBrowserSupported()"
+              [title]="voice.isBrowserSupported() ? 'Hablar con Mei' : 'Reconocimiento de voz no disponible en este navegador'"
+              class="w-full sm:w-auto px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               [ngClass]="voice.isListening() ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse' : 'bg-tertiary-container hover:bg-tertiary text-white'"
             >
               <span class="material-symbols-outlined text-lg">
                 {{ voice.isListening() ? 'mic_off' : 'mic' }}
               </span>
-              <span>{{ voice.isListening() ? 'Detener Escucha' : 'Iniciar Escucha' }}</span>
+              <span>{{ voice.isListening() ? 'Detener y Procesar' : (voice.transcript() ? 'Hablar de Nuevo' : 'Iniciar Escucha') }}</span>
             </button>
 
             <div class="w-full sm:w-auto flex items-center justify-end gap-2">
@@ -244,7 +280,8 @@ import { NotificationService } from '../../services/notification.service';
                 type="button"
                 *ngIf="voice.interpretedOrder()"
                 (click)="confirmOrder()"
-                class="flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-primary text-on-primary text-xs font-bold hover:bg-surface-tint shadow-md transition-all flex items-center justify-center gap-2"
+                [disabled]="confirmando || voice.isListening()"
+                class="flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-primary text-on-primary text-xs font-bold hover:bg-surface-tint shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <span>Confirmar Pedido</span>
                 <span class="material-symbols-outlined text-sm">check_circle</span>
@@ -259,6 +296,8 @@ import { NotificationService } from '../../services/notification.service';
 })
 export class VoiceModalComponent {
   manualInputText = '';
+  /** Evita registrar dos veces el mismo pedido por clics repetidos. */
+  confirmando = false;
 
   constructor(
     public voice: VoiceAiService,
@@ -278,6 +317,10 @@ export class VoiceModalComponent {
     }
   }
 
+  esComensal(): boolean {
+    return this.clientesService.idClienteDeUsuario(this.auth.currentUser()) !== null;
+  }
+
   sendManualText(): void {
     if (!this.manualInputText.trim()) return;
     this.voice.processManualText(this.manualInputText);
@@ -286,20 +329,23 @@ export class VoiceModalComponent {
 
   confirmOrder(): void {
     const order = this.voice.interpretedOrder();
-    if (!order) return;
+    if (!order || this.confirmando || this.voice.isListening()) return;
 
     const user = this.auth.currentUser();
     const idCliente = this.clientesService.idClienteDeUsuario(user);
     if (!user || idCliente === null) {
-      // Los pedidos pertenecen a un comensal: sin sesión de cliente no se puede asignar el pedido.
+      // Los pedidos pertenecen a un comensal: se conservan los platos en el carrito y se pide iniciar sesión.
+      order.items.forEach(i => this.cart.addItem(i.producto, i.cantidad, order.notasGenerales || undefined));
       this.notification.warning(
         'Inicia sesión como comensal',
-        'Ingresa con tu cuenta de cliente para que Mei registre tu pedido.'
+        'Guardamos los platos de Mei en tu carrito. Ingresa con tu cuenta de cliente para confirmar el pedido.'
       );
       this.voice.closeModal();
-      this.router.navigate(['/login'], { queryParams: { returnUrl: this.router.url } });
+      this.router.navigate(['/login'], { queryParams: { returnUrl: '/carta' } });
       return;
     }
+
+    this.confirmando = true;
 
     const detalles = order.items.map((i, idx) => ({
       id_detalle: idx + 1,
@@ -322,7 +368,9 @@ export class VoiceModalComponent {
       origen: 'voice_ai'
     });
 
+    this.voice.vincularPedido(nuevo.codigo);
     this.voice.closeModal();
+    this.confirmando = false;
 
     this.notification.success(
       '¡Pedido por Voz Registrado!',

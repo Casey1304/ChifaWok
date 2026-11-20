@@ -39,6 +39,17 @@ export class MetricasService {
     this.storage.set(this.SESIONES_KEY, updated);
   }
 
+  /** Marca la sesión de voz con el código del pedido que originó. */
+  vincularPedido(idSesion: number, codigoPedido: string): void {
+    const updated = this.sesiones().map(s =>
+      s.id_sesion === idSesion
+        ? { ...s, pedido_asociado_codigo: codigoPedido, exitosa: true, estado: 'finalizada' as const }
+        : s
+    );
+    this.sesiones.set(updated);
+    this.storage.set(this.SESIONES_KEY, updated);
+  }
+
   getDashboardData(): MetricasDashboard {
     const pedidos = this.pedidosService.pedidos();
     const ventasDia = this.pedidosService.totalVentasDia();

@@ -3,7 +3,9 @@ import { ProductosService } from './productos.service';
 import { MetricasService } from './metricas.service';
 import { Producto } from '../models/producto.model';
 import { SesionVoz } from '../models/sesion-voz.model';
-import { normalizarTexto } from '../utils/texto.util';
+import { AuthService } from './auth.service';
+import { interpretarPedido } from '../utils/interprete-pedido.util';
+import { calcularTotales } from '../utils/totales.util';
 
 export type VoiceState = 'idle' | 'listening' | 'processing' | 'speaking' | 'clarification' | 'ready_to_confirm' | 'error';
 
@@ -24,6 +26,8 @@ export interface InterpretedOrder {
   direccion?: string;
   mesa?: string;
   notasGenerales: string;
+  /** Avisos para el comensal: platos no reconocidos, no disponibles o ambiguos. */
+  avisos: string[];
 }
 
 @Injectable({
@@ -44,10 +48,18 @@ export class VoiceAiService {
   readonly errorMessage = signal<string | null>(null);
   readonly isModalOpen = signal<boolean>(false);
   readonly interpretedOrder = signal<InterpretedOrder | null>(null);
+  /** true cuando el texto actual proviene del micrófono (no del teclado). */
+  readonly entradaPorVoz = signal<boolean>(false);
+
+  /** Confianza (0-1) informada por el motor de reconocimiento para la última frase. */
+  private confianzaVoz: number | null = null;
+  private inicioEscucha = 0;
+  private ultimaSesionId: number | null = null;
 
   constructor(
     private productosService: ProductosService,
-    private metricasService: MetricasService
+    private metricasService: MetricasService,
+    private auth: AuthService
   ) {
     this.initSpeechRecognition();
     this.initSpeechSynthesis();
@@ -67,14 +79,20 @@ export class VoiceAiService {
           this.isListening.set(true);
           this.voiceState.set('listening');
           this.errorMessage.set(null);
+          this.inicioEscucha = Date.now();
         };
 
         this.recognition.onresult = (event: any) => {
+          // Se reconstruye desde el primer resultado para no perder fragmentos ya finalizados.
           let currentTranscript = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
+          for (let i = 0; i < event.results.length; i++) {
             currentTranscript += event.results[i][0].transcript;
+            if (event.results[i].isFinal && typeof event.results[i][0].confidence === 'number') {
+              this.confianzaVoz = event.results[i][0].confidence;
+            }
           }
-          this.transcript.set(currentTranscript);
+          this.entradaPorVoz.set(true);
+          this.transcript.set(currentTranscript.trim());
         };
 
         this.recognition.onerror = (event: any) => {
@@ -83,11 +101,18 @@ export class VoiceAiService {
           this.voiceState.set('error');
 
           if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-            this.errorMessage.set('Permiso de micrófono denegado. Puedes escribir tu pedido manualmente.');
+            this.errorMessage.set('Permiso de micrófono denegado. Haz clic en el candado de la barra de direcciones, permite el micrófono y vuelve a intentarlo, o escribe tu pedido.');
           } else if (event.error === 'no-speech') {
             this.errorMessage.set('No se detectó voz. Por favor intenta hablar de nuevo o escribe tu pedido.');
           } else if (event.error === 'audio-capture') {
             this.errorMessage.set('No se encontró micrófono en el dispositivo. Puedes usar el teclado.');
+          } else if (event.error === 'network') {
+            this.errorMessage.set('El reconocimiento de voz del navegador necesita conexión a Internet. Revisa la red o escribe tu pedido.');
+          } else if (event.error === 'aborted') {
+            this.voiceState.set('idle');
+            this.errorMessage.set(null);
+          } else if (event.error === 'language-not-supported') {
+            this.errorMessage.set('El navegador no admite reconocimiento en español. Usa Google Chrome o Microsoft Edge, o escribe tu pedido.');
           } else {
             this.errorMessage.set(`Aviso de voz: ${event.error}. Puedes ingresar tu pedido con texto.`);
           }
@@ -136,7 +161,16 @@ export class VoiceAiService {
   }
 
   closeModal(): void {
-    this.stopListening();
+    // Se pasa a 'idle' antes de detener para que onend no procese texto con el modal cerrado.
+    this.voiceState.set('idle');
+    if (this.recognition) {
+      try {
+        this.recognition.abort();
+      } catch {
+        // El reconocimiento ya estaba detenido.
+      }
+    }
+    this.isListening.set(false);
     this.stopSpeaking();
     this.isModalOpen.set(false);
     this.resetState();
@@ -151,6 +185,8 @@ export class VoiceAiService {
     this.stopSpeaking();
     this.transcript.set('');
     this.errorMessage.set(null);
+    this.interpretedOrder.set(null);
+    this.confianzaVoz = null;
     try {
       this.recognition.start();
     } catch {
@@ -207,13 +243,24 @@ export class VoiceAiService {
 
   processManualText(text: string): void {
     if (!text || text.trim().length === 0) return;
-    this.transcript.set(text);
-    this.processInput(text);
+    this.entradaPorVoz.set(false);
+    this.confianzaVoz = null;
+    this.transcript.set(text.trim());
+    this.processInput(text.trim());
+  }
+
+  /** Asocia la última sesión de voz con el pedido registrado (visible en el monitor admin). */
+  vincularPedido(codigo: string): void {
+    if (this.ultimaSesionId !== null) {
+      this.metricasService.vincularPedido(this.ultimaSesionId, codigo);
+    }
   }
 
   // NLP logic for Peruvian-Chinese fusion terminology
   private processInput(rawText: string): void {
     this.voiceState.set('processing');
+    // Cada frase reemplaza la interpretación anterior: nunca se confirma un resumen desactualizado.
+    this.interpretedOrder.set(null);
     const lower = rawText.toLowerCase();
 
     // 1. Check for Peruvian Chifa culinary slang & modifiers
@@ -245,96 +292,56 @@ export class VoiceAiService {
       notasGenerales += 'Bebidas al polo / bien heladas. ';
     }
 
-    // 2. Identify products in the catalog
-    const allProducts = this.productosService.productos();
-    const matchedItems: InterpretedItem[] = [];
+    // 2. Interpretación contra la carta real (sin inventar platos).
+    const resultado = interpretarPedido(rawText, this.productosService.productos());
+    const matchedItems: InterpretedItem[] = resultado.items.map(i => ({
+      producto: i.producto,
+      cantidad: i.cantidad,
+      subtotal: Math.round(i.cantidad * i.producto.precio * 100) / 100
+    }));
 
-    // Texto normalizado (sin tildes, minúsculas) para comparar con la carta.
-    const normalizado = normalizarTexto(rawText);
-
-    // Helper to extract quantity: analiza solo el fragmento del ítem actual,
-    // es decir, el texto previo al término encontrado y posterior al último separador.
-    const extractQuantity = (text: string, idx: number): number => {
-      let prefix = text.substring(Math.max(0, idx - 25), idx);
-      const corte = Math.max(prefix.lastIndexOf(','), prefix.lastIndexOf(' y '), prefix.lastIndexOf(' mas '));
-      if (corte >= 0) prefix = prefix.substring(corte + 1);
-      const p = ` ${prefix} `;
-      if (p.includes(' media docena ')) return 0.5;
-      if (p.includes(' docena ')) return 1;
-      if (/\s(2|dos|par)\s/.test(p)) return 2;
-      if (/\s(3|tres)\s/.test(p)) return 3;
-      if (/\s(4|cuatro)\s/.test(p)) return 4;
-      return 1;
-    };
-
-    // Match each product
-    for (const prod of allProducts) {
-      const searchTerms = [prod.nombre, ...(prod.sinonimos_voz || [])].map(t => normalizarTexto(t));
-      const idx = searchTerms
-        .map(term => normalizado.indexOf(term))
-        .filter(i => i >= 0)
-        .reduce((min, i) => Math.min(min, i), Number.POSITIVE_INFINITY);
-
-      if (idx !== Number.POSITIVE_INFINITY) {
-        const qty = extractQuantity(normalizado, idx);
-        matchedItems.push({
-          producto: prod,
-          cantidad: qty,
-          subtotal: Math.round(qty * prod.precio * 100) / 100
-        });
-      }
+    const avisos: string[] = [];
+    if (resultado.noReconocidos.length > 0) {
+      avisos.push(`No encontré en la carta: ${resultado.noReconocidos.map(t => `"${t}"`).join(', ')}.`);
     }
-
-    // 3. Fallback checks for common broad phrases if no direct match
-    if (matchedItems.length === 0) {
-      if (lower.includes('chaufa') || lower.includes('arroz')) {
-        const chaufa = allProducts.find(p => p.id_producto === 1);
-        if (chaufa) matchedItems.push({ producto: chaufa, cantidad: 1, subtotal: chaufa.precio });
-      } else if (lower.includes('tallarin') || lower.includes('saltado') || lower.includes('lomo')) {
-        const tallarin = allProducts.find(p => p.id_producto === 3);
-        if (tallarin) matchedItems.push({ producto: tallarin, cantidad: 1, subtotal: tallarin.precio });
-      } else if (lower.includes('tipakay') || lower.includes('agridulce')) {
-        const tipakay = allProducts.find(p => p.id_producto === 2);
-        if (tipakay) matchedItems.push({ producto: tipakay, cantidad: 1, subtotal: tipakay.precio });
-      } else if (lower.includes('aeropuerto')) {
-        const aero = allProducts.find(p => p.id_producto === 4);
-        if (aero) matchedItems.push({ producto: aero, cantidad: 1, subtotal: aero.precio });
-      } else if (lower.includes('wantan') || lower.includes('wantanes')) {
-        const wantan = allProducts.find(p => p.id_producto === 8);
-        if (wantan) matchedItems.push({ producto: wantan, cantidad: 1, subtotal: wantan.precio });
-      } else if (lower.includes('gaseosa') || lower.includes('inka') || lower.includes('bebida')) {
-        const inka = allProducts.find(p => p.id_producto === 10);
-        if (inka) matchedItems.push({ producto: inka, cantidad: 1, subtotal: inka.precio });
-      }
+    if (resultado.noDisponibles.length > 0) {
+      avisos.push(`Hoy no está disponible: ${resultado.noDisponibles.map(p => p.nombre).join(', ')}.`);
+    }
+    for (const a of resultado.ambiguos) {
+      const opciones = a.opciones.map(o => o.nombre);
+      const lista = opciones.length > 1
+        ? `${opciones.slice(0, -1).join(', ')} o ${opciones[opciones.length - 1]}`
+        : opciones[0];
+      avisos.push(`¿Qué ${a.termino} deseas: ${lista}?`);
     }
 
     // Check for irrelevant or unsupported queries (e.g. pizza, burger, sushi, ceviche)
     const comidaAjena = ['hamburguesa', 'pizza', 'ceviche', 'sushi', 'taco', 'salchipapa', 'pollo a la brasa'];
     const pideAjeno = comidaAjena.find(c => lower.includes(c));
 
-    if (pideAjeno) {
+    if (pideAjeno && matchedItems.length === 0) {
       this.voiceState.set('clarification');
       const resp = `En Chifa Wok nos especializamos exclusivamente en auténtica gastronomía fusión peruano-china al wok. No preparamos ${pideAjeno}, pero te recomiendo probar nuestro Arroz Chaufa Especial o Tallarín Saltado de Lomo. ¿Te gustaría ordenar uno de ellos?`;
       this.meiResponse.set(resp);
       this.speak(resp);
-      this.recordVoiceSession(rawText, resp, [], false, 95.0, jergaDetectada);
+      this.recordVoiceSession(rawText, resp, [], false, jergaDetectada);
       return;
     }
 
-    // 4. Handle Empty or Incomprehensible input
+    // 3. Nada reconocido: se pide aclaración (con detalle si hubo términos ambiguos o fuera de carta).
     if (matchedItems.length === 0) {
       this.voiceState.set('clarification');
-      const resp = 'No logré identificar los platillos exactos en tu pedido. Puedes decirme, por ejemplo: "Quiero un Arroz Chaufa Especial y una Inka Kola de litro". ¿Qué plato te provoca ordenar?';
+      const resp = avisos.length > 0
+        ? `${avisos.join(' ')} Por favor, repite tu pedido indicando el plato de la carta.`
+        : 'No logré identificar los platillos exactos en tu pedido. Puedes decirme, por ejemplo: "Quiero dos chaufas especiales y una Inka Kola". ¿Qué plato te provoca ordenar?';
       this.meiResponse.set(resp);
       this.speak(resp);
-      this.recordVoiceSession(rawText, resp, [], false, 82.0, jergaDetectada);
+      this.recordVoiceSession(rawText, resp, [], false, jergaDetectada);
       return;
     }
 
-    // 5. Successful interpretation!
-    const subtotal = matchedItems.reduce((sum, item) => sum + item.subtotal, 0);
-    const impuestos = Math.round(subtotal * 0.18 * 100) / 100;
-    const total = Math.round((subtotal + impuestos) * 100) / 100;
+    // 4. Pedido interpretado: se muestra para que el comensal lo revise antes de confirmar.
+    const { subtotal, impuestos, total } = calcularTotales(matchedItems.reduce((sum, item) => sum + item.subtotal, 0));
 
     const orderProposal: InterpretedOrder = {
       items: matchedItems,
@@ -342,18 +349,21 @@ export class VoiceAiService {
       subtotal,
       impuestos,
       total,
-      tipoEntrega: lower.includes('mesa') ? 'salon' : (lower.includes('llevar') ? 'recojo' : 'delivery'),
-      notasGenerales: notasGenerales.trim()
+      tipoEntrega: lower.includes('mesa') ? 'salon' : (lower.includes('llevar') || lower.includes('recojo') ? 'recojo' : 'delivery'),
+      notasGenerales: notasGenerales.trim(),
+      avisos
     };
 
     this.interpretedOrder.set(orderProposal);
-    this.voiceState.set('ready_to_confirm');
+    this.voiceState.set(avisos.length > 0 ? 'clarification' : 'ready_to_confirm');
 
-    // Build Mei's spoken confirmation
     const itemsText = matchedItems.map(i => `${i.cantidad} ${i.producto.nombre}`).join(' y ');
-    let confirmMsg = `Entendido, he añadido a tu pedido: ${itemsText}. `;
+    let confirmMsg = `Entendí: ${itemsText}. `;
     if (jergaDetectada.length > 0) {
       confirmMsg += `Tomando en cuenta: ${jergaDetectada.join(', ')}. `;
+    }
+    if (avisos.length > 0) {
+      confirmMsg += `${avisos.join(' ')} Puedes repetir el pedido completo o confirmar solo lo entendido. `;
     }
     confirmMsg += `El total es de ${total.toFixed(2)} soles. ¿Deseas confirmar este pedido?`;
 
@@ -363,9 +373,8 @@ export class VoiceAiService {
     this.recordVoiceSession(
       rawText,
       confirmMsg,
-      matchedItems.map(i => i.producto.nombre),
-      true,
-      99.2,
+      matchedItems.map(i => `${i.cantidad}x ${i.producto.nombre}`),
+      avisos.length === 0,
       jergaDetectada
     );
   }
@@ -375,31 +384,41 @@ export class VoiceAiService {
     meiResp: string,
     platos: string[],
     exitosa: boolean,
-    confianza: number,
     jerga: string[]
   ): void {
+    const user = this.auth.currentUser();
+    const ahora = new Date();
+    // Confianza real del motor de voz; para texto escrito se registra 100 (sin error de transcripción).
+    const confianza = this.entradaPorVoz() && this.confianzaVoz !== null
+      ? Math.round(this.confianzaVoz * 1000) / 10
+      : 100;
     const sesion: SesionVoz = {
-      id_sesion: Date.now(),
-      codigo_llamada: `#CW-${Math.floor(1000 + Math.random() * 9000)}`,
-      cliente_nombre: 'Comensal en línea',
-      ubicacion: 'Lima Metropolitana • Web',
+      id_sesion: ahora.getTime(),
+      codigo_llamada: `#CW-${String(ahora.getTime()).slice(-4)}`,
+      cliente_nombre: user ? `${user.nombre} ${user.apellido}` : 'Visitante sin sesión',
+      ubicacion: this.entradaPorVoz() ? 'Web • Micrófono' : 'Web • Texto',
       canal: 'Voice AI Mei',
-      fecha: new Date().toISOString().split('T')[0],
-      hora: new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      fecha: ahora.toISOString().split('T')[0],
+      hora: ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true }),
       hace_tiempo: 'Ahora mismo',
-      duracion_segundos: Math.floor(20 + Math.random() * 25),
+      duracion_segundos: this.entradaPorVoz() && this.inicioEscucha > 0
+        ? Math.max(1, Math.round((ahora.getTime() - this.inicioEscucha) / 1000))
+        : 0,
       exitosa,
       confianza,
       transcripcion_usuario: userInput,
       respuesta_mei: meiResp,
       platos_identificados: platos,
       modificadores_jerga: jerga,
-      estado: 'finalizada'
+      estado: exitosa ? 'finalizada' : 'aclarando'
     };
+    this.ultimaSesionId = sesion.id_sesion;
     this.metricasService.registrarSesion(sesion);
   }
 
   resetState(): void {
+    this.entradaPorVoz.set(false);
+    this.confianzaVoz = null;
     this.transcript.set('');
     this.meiResponse.set('');
     this.errorMessage.set(null);
