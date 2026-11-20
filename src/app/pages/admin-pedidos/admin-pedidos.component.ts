@@ -1,9 +1,11 @@
-import { Component, signal } from '@angular/core';
+import { Component, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AdminSidebarComponent } from '../../components/admin-sidebar/admin-sidebar.component';
 import { PedidosService } from '../../services/pedidos.service';
 import { MetricasService } from '../../services/metricas.service';
+import { ProductosService } from '../../services/productos.service';
+import { StorageService } from '../../services/storage.service';
 import { NotificationService } from '../../services/notification.service';
 import { Pedido } from '../../models/pedido.model';
 
@@ -12,16 +14,16 @@ import { Pedido } from '../../models/pedido.model';
   standalone: true,
   imports: [CommonModule, FormsModule, AdminSidebarComponent],
   template: `
-    <div class="flex h-screen overflow-hidden bg-background">
+    <div class="flex flex-col lg:flex-row h-screen overflow-hidden bg-background">
       <!-- Admin Sidebar -->
       <app-admin-sidebar></app-admin-sidebar>
 
       <!-- Main KDS Monitor Area -->
-      <main class="flex-1 flex flex-col h-screen overflow-hidden bg-background">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col lg:h-screen overflow-y-auto lg:overflow-hidden bg-background custom-scroll">
         
         <!-- Header & Stats Bar (Matches Stitch design) -->
-        <header class="bg-surface border-b border-outline-variant/30 px-6 py-4 shrink-0 shadow-xs">
-          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <header class="bg-surface border-b border-outline-variant/30 px-4 sm:px-6 py-4 shrink-0 shadow-xs">
+          <div class="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-4">
             <div>
               <div class="flex items-center gap-2">
                 <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
@@ -30,7 +32,7 @@ import { Pedido } from '../../models/pedido.model';
                   Turno Almuerzo Activo
                 </span>
               </div>
-              <h1 class="font-display-lg text-2xl font-black text-on-surface mt-0.5">
+              <h1 class="font-display-lg text-xl sm:text-2xl font-black text-on-surface mt-0.5">
                 Panel Operativo — Monitor de Pedidos al Wok
               </h1>
             </div>
@@ -59,7 +61,7 @@ import { Pedido } from '../../models/pedido.model';
                 <span class="material-symbols-outlined text-tertiary text-xl">timer</span>
                 <div>
                   <span class="text-[10px] text-on-surface-variant block uppercase font-bold">Tiempo Wok</span>
-                  <span class="font-display-lg text-sm font-black text-on-surface">8.5 min</span>
+                  <span class="font-display-lg text-sm font-black text-on-surface">{{ tiempoWokPromedio() }} min</span>
                 </div>
               </div>
 
@@ -67,29 +69,33 @@ import { Pedido } from '../../models/pedido.model';
                 <span class="material-symbols-outlined text-emerald-600 text-xl">record_voice_over</span>
                 <div>
                   <span class="text-[10px] text-on-surface-variant block uppercase font-bold">Eficiencia Voice AI</span>
-                  <span class="font-display-lg text-sm font-black text-emerald-700">98.2%</span>
+                  <span class="font-display-lg text-sm font-black text-emerald-700">{{ metricasService.tasaExitoVoiceAI() }}%</span>
                 </div>
               </div>
             </div>
           </div>
         </header>
 
-        <!-- Low stock alert ribbon (Matches Stitch) -->
-        <div class="bg-red-50 border-b border-red-200 px-6 py-2 flex items-center justify-between text-xs text-red-900 shrink-0">
+        <!-- Alerta de stock bajo (calculada desde el inventario de productos) -->
+        <div *ngIf="productosStockBajo().length > 0 && !alertaSilenciada()" class="bg-red-50 border-b border-red-200 px-4 sm:px-6 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-red-900 shrink-0">
           <div class="flex items-center gap-2">
             <span class="material-symbols-outlined text-red-600 text-base">warning</span>
-            <span><strong>Insumo bajo:</strong> Lomo Fino (alerta wok). Stock actual: 3.2 kg (aprox. 11 platos restantes). Notificar al proveedor.</span>
+            <span>
+              <strong>Stock bajo:</strong>
+              <span *ngFor="let p of productosStockBajo(); let last = last">{{ p.nombre }} ({{ p.stock }} und.){{ last ? '' : ', ' }}</span>.
+              Repón desde Gestión de Productos.
+            </span>
           </div>
-          <button (click)="silenciarAlerta()" class="text-[11px] font-bold text-red-700 hover:underline">
+          <button type="button" (click)="silenciarAlerta()" class="text-[11px] font-bold text-red-700 hover:underline self-start sm:self-auto">
             Silenciar 30 min
           </button>
         </div>
 
         <!-- 3-COLUMN KANBAN BOARD + RIGHT LIVE FEED -->
-        <div class="flex-1 flex overflow-hidden p-6 gap-6">
+        <div class="flex-1 flex flex-col lg:flex-row lg:min-h-0 lg:overflow-hidden p-4 sm:p-6 gap-4 sm:gap-6">
           
           <!-- Column 1: NUEVOS / RECIBIDOS -->
-          <div class="flex-1 flex flex-col rounded-2xl bg-surface border border-outline-variant/40 shadow-xs overflow-hidden">
+          <div class="flex-1 min-w-0 flex flex-col rounded-2xl bg-surface border border-outline-variant/40 shadow-xs overflow-hidden max-h-[70vh] lg:max-h-none">
             <div class="p-3.5 bg-amber-50/80 border-b border-amber-200/80 flex items-center justify-between shrink-0">
               <div class="flex items-center gap-2">
                 <span class="w-3 h-3 rounded-full bg-amber-500 animate-pulse"></span>
@@ -162,7 +168,7 @@ import { Pedido } from '../../models/pedido.model';
           </div>
 
           <!-- Column 2: EN WOK / COCINA -->
-          <div class="flex-1 flex flex-col rounded-2xl bg-surface border border-outline-variant/40 shadow-xs overflow-hidden">
+          <div class="flex-1 min-w-0 flex flex-col rounded-2xl bg-surface border border-outline-variant/40 shadow-xs overflow-hidden max-h-[70vh] lg:max-h-none">
             <div class="p-3.5 bg-blue-50/80 border-b border-blue-200/80 flex items-center justify-between shrink-0">
               <div class="flex items-center gap-2">
                 <span class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></span>
@@ -219,7 +225,7 @@ import { Pedido } from '../../models/pedido.model';
           </div>
 
           <!-- Column 3: LISTOS PARA DESPACHO -->
-          <div class="flex-1 flex flex-col rounded-2xl bg-surface border border-outline-variant/40 shadow-xs overflow-hidden">
+          <div class="flex-1 min-w-0 flex flex-col rounded-2xl bg-surface border border-outline-variant/40 shadow-xs overflow-hidden max-h-[70vh] lg:max-h-none">
             <div class="p-3.5 bg-emerald-50/80 border-b border-emerald-200/80 flex items-center justify-between shrink-0">
               <div class="flex items-center gap-2">
                 <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
@@ -291,8 +297,8 @@ import { Pedido } from '../../models/pedido.model';
                 class="p-3.5 rounded-xl border border-surface-container bg-surface-container-lowest shadow-xs space-y-2"
               >
                 <div class="flex items-center justify-between">
-                  <span class="font-black text-xs text-primary">{{ s.codigo_llamada }} • Finalizada</span>
-                  <span class="text-[10px] text-on-surface-variant font-medium">{{ s.hace_tiempo }}</span>
+                  <span class="font-black text-xs text-primary">{{ s.codigo_llamada }} • {{ s.pedido_asociado_codigo ? 'Pedido registrado' : (s.estado === 'aclarando' ? 'Aclaración' : 'Sin confirmar') }}</span>
+                  <span class="text-[10px] text-on-surface-variant font-medium">{{ s.hora }}</span>
                 </div>
                 
                 <p class="text-xs text-on-surface font-medium leading-relaxed italic">
@@ -300,7 +306,7 @@ import { Pedido } from '../../models/pedido.model';
                 </p>
 
                 <div class="flex items-center justify-between text-[10px] text-on-surface-variant pt-1 border-t border-surface-container">
-                  <span class="font-semibold text-emerald-700">✓ Confianza: {{ s.confianza }}%</span>
+                  <span class="font-semibold" [ngClass]="s.exitosa ? 'text-emerald-700' : 'text-amber-700'">{{ s.exitosa ? '✓' : '?' }} Confianza: {{ s.confianza }}%</span>
                   <span *ngIf="s.pedido_asociado_codigo" class="font-bold text-primary">
                     Orden {{ s.pedido_asociado_codigo }}
                   </span>
@@ -361,11 +367,42 @@ export class AdminPedidosComponent {
   pedidoACancelar: Pedido | null = null;
   motivoCancelacion = 'Insumo agotado en cocina';
 
+  private readonly STOCK_MINIMO = 10;
+  private readonly ALERTA_KEY = 'alerta_stock_silenciada_hasta';
+  private readonly silenciadaHasta = signal<number>(0);
+  private readonly ahora = signal<number>(Date.now());
+
+  /** Platos disponibles con stock igual o menor al mínimo. */
+  readonly productosStockBajo = computed(() =>
+    this.productosService.productos().filter(p => p.disponible && p.stock <= this.STOCK_MINIMO)
+  );
+
+  readonly alertaSilenciada = computed(() => this.silenciadaHasta() > this.ahora());
+
+  /** Tiempo de preparación medio (min) de los platos en las comandas activas. */
+  readonly tiempoWokPromedio = computed(() => {
+    const activos = this.pedidosService.pedidos().filter(p => p.estado === 'pendiente' || p.estado === 'en_preparacion');
+    let minutos = 0;
+    let unidades = 0;
+    for (const p of activos) {
+      for (const d of p.detalles) {
+        const prod = this.productosService.getProductoById(d.id_producto);
+        minutos += (prod?.tiempo_preparacion_min || 8) * d.cantidad;
+        unidades += d.cantidad;
+      }
+    }
+    return unidades ? Math.round((minutos / unidades) * 10) / 10 : 0;
+  });
+
   constructor(
     public pedidosService: PedidosService,
     public metricasService: MetricasService,
+    private productosService: ProductosService,
+    private storage: StorageService,
     private notification: NotificationService
-  ) {}
+  ) {
+    this.silenciadaHasta.set(this.storage.get<number>(this.ALERTA_KEY, 0));
+  }
 
   pasarACocina(p: Pedido): void {
     this.pedidosService.actualizarEstado(p.id_pedido, 'en_preparacion', 'Salteando al wok (~7 min)');
@@ -394,6 +431,10 @@ export class AdminPedidosComponent {
   }
 
   silenciarAlerta(): void {
+    const hasta = Date.now() + 30 * 60 * 1000;
+    this.storage.set(this.ALERTA_KEY, hasta);
+    this.silenciadaHasta.set(hasta);
+    this.ahora.set(Date.now());
     this.notification.info('Alerta Silenciada', 'Se ocultó el aviso de stock por 30 minutos.');
   }
 }

@@ -2,6 +2,7 @@ import { Injectable, signal, computed } from '@angular/core';
 import { Producto } from '../models/producto.model';
 import { DetallePedido } from '../models/pedido.model';
 import { StorageService } from './storage.service';
+import { calcularTotales } from '../utils/totales.util';
 
 export interface CartItem {
   producto: Producto;
@@ -22,17 +23,19 @@ export class CartService {
     this.items().reduce((sum, item) => sum + item.cantidad, 0)
   );
 
-  readonly subtotal = computed(() => 
-    this.items().reduce((sum, item) => sum + item.subtotal, 0)
+  /** Desglose con IGV incluido en los precios de la carta. */
+  private readonly totales = computed(() =>
+    calcularTotales(this.items().reduce((sum, item) => sum + item.subtotal, 0))
   );
 
-  readonly impuestos = computed(() => 
-    Math.round(this.subtotal() * 0.18 * 100) / 100
-  );
+  /** Operación gravada (sin IGV). */
+  readonly subtotal = computed(() => this.totales().subtotal);
 
-  readonly total = computed(() => 
-    Math.round((this.subtotal() + this.impuestos()) * 100) / 100
-  );
+  /** IGV (18%) contenido en el total. */
+  readonly impuestos = computed(() => this.totales().impuestos);
+
+  /** Total a pagar: suma de los precios de la carta. */
+  readonly total = computed(() => this.totales().total);
 
   constructor(private storage: StorageService) {
     const saved = this.storage.get<CartItem[]>(this.CART_KEY, []);

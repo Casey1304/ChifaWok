@@ -10,7 +10,7 @@ import { NotificationService } from '../../services/notification.service';
   imports: [CommonModule],
   template: `
     <!-- En el panel admin se desplaza a la derecha del sidebar (w-64) para no tapar «Ver Carta» / «Salir». -->
-    <div class="fixed bottom-4 z-40 hidden sm:block" [ngClass]="enAdmin ? 'left-[17rem]' : 'left-4'">
+    <div class="fixed bottom-4 z-40 hidden sm:block" [ngClass]="enAdmin ? 'left-4 lg:left-[17rem]' : 'left-4'">
       <!-- Minimized pill -->
       <div
         *ngIf="isCollapsed()"

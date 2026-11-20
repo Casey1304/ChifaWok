@@ -231,8 +231,8 @@ export class LoginComponent {
 
     this.isSubmitting.set(true);
 
-    setTimeout(() => {
-      const res = this.auth.login(this.loginForm.value);
+    setTimeout(async () => {
+      const res = await this.auth.login(this.loginForm.value);
       this.isSubmitting.set(false);
 
       if (res.success) {

@@ -5,6 +5,7 @@ import { AdminSidebarComponent } from '../../components/admin-sidebar/admin-side
 import { ClientesService } from '../../services/clientes.service';
 import { NotificationService } from '../../services/notification.service';
 import { Cliente } from '../../models/cliente.model';
+import { descargarCsv } from '../../utils/csv.util';
 import { coincideBusqueda } from '../../utils/texto.util';
 
 @Component({
@@ -12,13 +13,13 @@ import { coincideBusqueda } from '../../utils/texto.util';
   standalone: true,
   imports: [CommonModule, FormsModule, AdminSidebarComponent],
   template: `
-    <div class="flex h-screen overflow-hidden bg-background">
+    <div class="flex flex-col lg:flex-row h-screen overflow-hidden bg-background">
       <app-admin-sidebar></app-admin-sidebar>
 
-      <main class="flex-1 flex flex-col h-screen overflow-y-auto bg-background custom-scroll">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col lg:h-screen overflow-y-auto bg-background custom-scroll">
         
         <!-- Header -->
-        <header class="bg-surface border-b border-outline-variant/30 px-8 py-5 sticky top-0 z-20 shadow-xs">
+        <header class="bg-surface border-b border-outline-variant/30 px-4 sm:px-8 py-4 sm:py-5 sticky top-0 z-20 shadow-xs">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span class="text-xs font-bold uppercase tracking-wider text-primary">CRM & Fidelización</span>
@@ -39,15 +40,15 @@ import { coincideBusqueda } from '../../utils/texto.util';
           </div>
         </header>
 
-        <div class="p-8 space-y-6 max-w-[1440px] w-full">
+        <div class="p-4 sm:p-8 space-y-6 max-w-[1440px] w-full">
           
           <!-- Top KPI Cards (Matches Stitch screen) -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="p-4 rounded-2xl bg-surface border border-outline-variant/40 shadow-xs flex items-center justify-between">
               <div>
                 <span class="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">Total Clientes</span>
-                <span class="font-display-lg text-2xl font-black text-on-surface">1,420</span>
-                <span class="text-[10px] text-emerald-700 block mt-0.5 font-bold">↗ +12% este mes</span>
+                <span class="font-display-lg text-2xl font-black text-on-surface">{{ clientesService.totalClientes() }}</span>
+                <span class="text-[10px] text-on-surface-variant block mt-0.5 font-bold">Registrados en el directorio</span>
               </div>
               <div class="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
                 <span class="material-symbols-outlined text-2xl">groups</span>
@@ -102,28 +103,28 @@ import { coincideBusqueda } from '../../utils/texto.util';
                     class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0"
                     [ngClass]="filtroNivel() === null ? 'bg-primary text-white' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'"
                   >
-                    Todos (1,420)
+                    Todos ({{ clientesService.totalClientes() }})
                   </button>
                   <button
                     (click)="filtroNivel.set('Oro VIP')"
                     class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0"
                     [ngClass]="filtroNivel() === 'Oro VIP' ? 'bg-primary text-white' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'"
                   >
-                    Dragón Dorado VIP (Top 10%)
+                    Dragón Dorado VIP ({{ clientesService.clientesVIP().length }})
                   </button>
                   <button
                     (click)="filtroNivel.set('Frecuente')"
                     class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0"
                     [ngClass]="filtroNivel() === 'Frecuente' ? 'bg-primary text-white' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'"
                   >
-                    Frecuentes (68%)
+                    Frecuentes ({{ clientesService.clientesFrecuentes().length }})
                   </button>
                   <button
                     (click)="filtroNivel.set('Nuevo')"
                     class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0"
                     [ngClass]="filtroNivel() === 'Nuevo' ? 'bg-primary text-white' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'"
                   >
-                    Nuevos (22%)
+                    Nuevos ({{ clientesService.clientesNuevos().length }})
                   </button>
                 </div>
 
@@ -375,11 +376,29 @@ export class AdminClientesComponent {
     this.clienteSeleccionado.set(c);
   }
 
+  /** Exporta a CSV los clientes visibles (respeta búsqueda y filtro de nivel). */
   exportarDatos(): void {
-    this.notification.success('Exportación Exitosa', 'Directorio de 1,420 clientes exportado a CSV.');
+    const lista = this.clientesFiltrados();
+    if (lista.length === 0) {
+      this.notification.warning('Sin datos', 'No hay clientes con los filtros actuales.');
+      return;
+    }
+    descargarCsv(`chifawok-clientes-${new Date().toISOString().split('T')[0]}.csv`, [
+      ['Nombre', 'Apellido', 'Correo', 'Teléfono', 'Distrito', 'Dirección', 'Nivel', 'Pedidos', 'Gasto total (S/)', 'Canal habitual', 'Plato favorito', 'Puntos'],
+      ...lista.map(c => [
+        c.nombre, c.apellido, c.email, c.telefono, c.distrito, c.direccion, c.nivel,
+        c.pedidos_totales, c.gasto_total.toFixed(2), c.canal_habitual, c.plato_favorito, c.puntos_dragon
+      ])
+    ]);
+    this.notification.success('Exportación Exitosa', `${lista.length} clientes exportados a CSV.`);
   }
 
+  /** Genera un código de cupón para compartir manualmente (no hay pasarela de SMS/WhatsApp integrada). */
   enviarCupon(c: Cliente): void {
-    this.notification.success('Cupón Enviado', `Se envió un cupón del 15% a ${c.nombre} por SMS y WhatsApp.`);
+    const codigo = `WOK15-${c.id_cliente.toString().slice(-4)}`;
+    this.notification.info(
+      'Cupón generado',
+      `Código ${codigo} (15%) para ${c.nombre}. Compártelo con el cliente: el envío por SMS/WhatsApp no está integrado.`
+    );
   }
 }
