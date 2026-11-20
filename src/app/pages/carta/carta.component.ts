@@ -58,10 +58,13 @@ import { filtrarProductos } from '../../utils/filtros.util';
       </div>
 
       <!-- CATEGORY TABS -->
-      <div class="sticky top-20 z-30 bg-surface/95 backdrop-blur-md border-b border-outline-variant/30 px-4 sm:px-6 lg:px-8 py-3">
-        <div class="max-w-[1440px] mx-auto flex items-center gap-2 overflow-x-auto pb-1 custom-scroll">
+      <div class="bg-surface/95 border-b border-outline-variant/30 px-4 sm:px-6 lg:px-8 py-3">
+        <div class="max-w-[1440px] mx-auto flex flex-nowrap items-center gap-2 overflow-x-auto overscroll-x-contain pb-1 custom-scroll" role="tablist" aria-label="Categorías de la carta">
           
           <button
+            type="button"
+            role="tab"
+            [attr.aria-selected]="selectedCategoriaId() === null"
             (click)="selectedCategoriaId.set(null)"
             class="px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0"
             [ngClass]="selectedCategoriaId() === null ? 'bg-primary text-white shadow-xs' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'"
@@ -72,6 +75,9 @@ import { filtrarProductos } from '../../utils/filtros.util';
 
           <button
             *ngFor="let cat of productosService.categorias()"
+            type="button"
+            role="tab"
+            [attr.aria-selected]="selectedCategoriaId() === cat.id_categoria"
             (click)="selectedCategoriaId.set(cat.id_categoria)"
             class="px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0"
             [ngClass]="selectedCategoriaId() === cat.id_categoria ? 'bg-primary text-white shadow-xs' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'"
