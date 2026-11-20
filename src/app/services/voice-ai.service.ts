@@ -4,10 +4,17 @@ import { MetricasService } from './metricas.service';
 import { Producto } from '../models/producto.model';
 import { SesionVoz } from '../models/sesion-voz.model';
 import { AuthService } from './auth.service';
-import { interpretarPedido } from '../utils/interprete-pedido.util';
+import { DudaPedido, interpretarPedido } from '../utils/interprete-pedido.util';
 import { calcularTotales } from '../utils/totales.util';
 
-export type VoiceState = 'idle' | 'listening' | 'processing' | 'speaking' | 'clarification' | 'ready_to_confirm' | 'error';
+export type VoiceState =
+  | 'idle' | 'listening' | 'processing' | 'speaking' | 'clarification'
+  | 'identified' | 'ready_to_confirm' | 'registered' | 'error';
+
+/** Duda del intérprete con un identificador para la interfaz. */
+export interface DudaVista extends DudaPedido {
+  id: number;
+}
 
 export interface InterpretedItem {
   producto: Producto;
@@ -47,7 +54,12 @@ export class VoiceAiService {
   readonly meiResponse = signal<string>('');
   readonly errorMessage = signal<string | null>(null);
   readonly isModalOpen = signal<boolean>(false);
+  /** Pedido en construcción: se completa frase a frase y con las sugerencias elegidas. */
   readonly interpretedOrder = signal<InterpretedOrder | null>(null);
+  /** Sugerencias pendientes de la última frase (platos dudosos, genéricos o fuera de carta). */
+  readonly dudas = signal<DudaVista[]>([]);
+  /** Último pedido registrado desde Mei (para el estado "Pedido registrado"). */
+  readonly pedidoRegistrado = signal<{ codigo: string; total: number } | null>(null);
   /** true cuando el texto actual proviene del micrófono (no del teclado). */
   readonly entradaPorVoz = signal<boolean>(false);
 
@@ -55,6 +67,9 @@ export class VoiceAiService {
   private confianzaVoz: number | null = null;
   private inicioEscucha = 0;
   private ultimaSesionId: number | null = null;
+  /** Sesiones de voz que forman el pedido en construcción (se enlazan al registrarlo). */
+  private sesionesDelPedido: number[] = [];
+  private secuenciaDudas = 0;
 
   constructor(
     private productosService: ProductosService,
@@ -185,7 +200,8 @@ export class VoiceAiService {
     this.stopSpeaking();
     this.transcript.set('');
     this.errorMessage.set(null);
-    this.interpretedOrder.set(null);
+    this.dudas.set([]);
+    this.pedidoRegistrado.set(null);
     this.confianzaVoz = null;
     try {
       this.recognition.start();
@@ -259,8 +275,7 @@ export class VoiceAiService {
   // NLP logic for Peruvian-Chinese fusion terminology
   private processInput(rawText: string): void {
     this.voiceState.set('processing');
-    // Cada frase reemplaza la interpretación anterior: nunca se confirma un resumen desactualizado.
-    this.interpretedOrder.set(null);
+    this.pedidoRegistrado.set(null);
     const lower = rawText.toLowerCase();
 
     // 1. Check for Peruvian Chifa culinary slang & modifiers
@@ -294,11 +309,6 @@ export class VoiceAiService {
 
     // 2. Interpretación contra la carta real (sin inventar platos).
     const resultado = interpretarPedido(rawText, this.productosService.productos());
-    const matchedItems: InterpretedItem[] = resultado.items.map(i => ({
-      producto: i.producto,
-      cantidad: i.cantidad,
-      subtotal: Math.round(i.cantidad * i.producto.precio * 100) / 100
-    }));
 
     const avisos: string[] = [];
     if (resultado.noReconocidos.length > 0) {
@@ -307,76 +317,177 @@ export class VoiceAiService {
     if (resultado.noDisponibles.length > 0) {
       avisos.push(`Hoy no está disponible: ${resultado.noDisponibles.map(p => p.nombre).join(', ')}.`);
     }
-    for (const a of resultado.ambiguos) {
-      const opciones = a.opciones.map(o => o.nombre);
-      const lista = opciones.length > 1
-        ? `${opciones.slice(0, -1).join(', ')} o ${opciones[opciones.length - 1]}`
-        : opciones[0];
-      avisos.push(`¿Qué ${a.termino} deseas: ${lista}?`);
-    }
+
+    // Las sugerencias anteriores se descartan: solo se muestran las de esta frase.
+    this.dudas.set(resultado.dudas.map(d => ({ ...d, id: ++this.secuenciaDudas })));
+
+    // Lo reconocido con certeza se suma al pedido en construcción.
+    const actual = this.interpretedOrder();
+    let items = actual ? actual.items.map(i => ({ ...i })) : [];
+    for (const nuevo of resultado.items) items = this.sumarItem(items, nuevo.producto, nuevo.cantidad);
+
+    const tipoEntrega: InterpretedOrder['tipoEntrega'] = lower.includes('mesa') ? 'salon'
+      : (lower.includes('llevar') || lower.includes('recojo') ? 'recojo' : (actual?.tipoEntrega ?? 'delivery'));
+    const jerga = [...new Set([...(actual?.modificadoresJerga ?? []), ...jergaDetectada])];
+    const notas = [actual?.notasGenerales, notasGenerales.trim()].filter(Boolean).join(' ').trim();
+    this.actualizarPedido(items, { tipoEntrega, modificadoresJerga: jerga, notasGenerales: notas, avisos });
 
     // Check for irrelevant or unsupported queries (e.g. pizza, burger, sushi, ceviche)
     const comidaAjena = ['hamburguesa', 'pizza', 'ceviche', 'sushi', 'taco', 'salchipapa', 'pollo a la brasa'];
     const pideAjeno = comidaAjena.find(c => lower.includes(c));
+    const hayAlgo = resultado.items.length > 0 || resultado.dudas.length > 0;
 
-    if (pideAjeno && matchedItems.length === 0) {
-      this.voiceState.set('clarification');
-      const resp = `En Chifa Wok nos especializamos exclusivamente en auténtica gastronomía fusión peruano-china al wok. No preparamos ${pideAjeno}, pero te recomiendo probar nuestro Arroz Chaufa Especial o Tallarín Saltado de Lomo. ¿Te gustaría ordenar uno de ellos?`;
-      this.meiResponse.set(resp);
-      this.speak(resp);
-      this.recordVoiceSession(rawText, resp, [], false, jergaDetectada);
-      return;
+    let resp: string;
+    if (!hayAlgo) {
+      resp = pideAjeno
+        ? `En Chifa Wok nos especializamos en gastronomía fusión peruano-china al wok. No preparamos ${pideAjeno}, pero te recomiendo nuestro Arroz Chaufa Especial o el Tallarín Saltado de Lomo.`
+        : avisos.length > 0
+          ? `${avisos.join(' ')} Puedes repetirlo o escribir el nombre del plato.`
+          : 'No logré identificar un plato de la carta. Puedes decirlo de nuevo o escribirlo, por ejemplo: "Quiero dos chaufas especiales y una Inka Kola".';
+    } else {
+      const partes: string[] = [];
+      if (resultado.items.length > 0) {
+        partes.push(`Agregué ${this.listar(resultado.items)}.`);
+      }
+      partes.push(...this.preguntasDeDudas());
+      partes.push(...avisos);
+      if (resultado.dudas.length === 0) {
+        partes.push(`Tu pedido suma S/ ${this.interpretedOrder()!.total.toFixed(2)}. ¿Lo confirmo o agregas algo más?`);
+      }
+      resp = partes.join(' ');
     }
 
-    // 3. Nada reconocido: se pide aclaración (con detalle si hubo términos ambiguos o fuera de carta).
-    if (matchedItems.length === 0) {
-      this.voiceState.set('clarification');
-      const resp = avisos.length > 0
-        ? `${avisos.join(' ')} Por favor, repite tu pedido indicando el plato de la carta.`
-        : 'No logré identificar los platillos exactos en tu pedido. Puedes decirme, por ejemplo: "Quiero dos chaufas especiales y una Inka Kola". ¿Qué plato te provoca ordenar?';
-      this.meiResponse.set(resp);
-      this.speak(resp);
-      this.recordVoiceSession(rawText, resp, [], false, jergaDetectada);
-      return;
-    }
-
-    // 4. Pedido interpretado: se muestra para que el comensal lo revise antes de confirmar.
-    const { subtotal, impuestos, total } = calcularTotales(matchedItems.reduce((sum, item) => sum + item.subtotal, 0));
-
-    const orderProposal: InterpretedOrder = {
-      items: matchedItems,
-      modificadoresJerga: jergaDetectada,
-      subtotal,
-      impuestos,
-      total,
-      tipoEntrega: lower.includes('mesa') ? 'salon' : (lower.includes('llevar') || lower.includes('recojo') ? 'recojo' : 'delivery'),
-      notasGenerales: notasGenerales.trim(),
-      avisos
-    };
-
-    this.interpretedOrder.set(orderProposal);
-    this.voiceState.set(avisos.length > 0 ? 'clarification' : 'ready_to_confirm');
-
-    const itemsText = matchedItems.map(i => `${i.cantidad} ${i.producto.nombre}`).join(' y ');
-    let confirmMsg = `Entendí: ${itemsText}. `;
-    if (jergaDetectada.length > 0) {
-      confirmMsg += `Tomando en cuenta: ${jergaDetectada.join(', ')}. `;
-    }
-    if (avisos.length > 0) {
-      confirmMsg += `${avisos.join(' ')} Puedes repetir el pedido completo o confirmar solo lo entendido. `;
-    }
-    confirmMsg += `El total es de ${total.toFixed(2)} soles. ¿Deseas confirmar este pedido?`;
-
-    this.meiResponse.set(confirmMsg);
-    this.speak(confirmMsg);
-
+    this.voiceState.set(this.dudas().length > 0 || !this.tieneItems() ? 'clarification' : 'ready_to_confirm');
+    this.meiResponse.set(resp);
+    this.speak(resp);
     this.recordVoiceSession(
       rawText,
-      confirmMsg,
-      matchedItems.map(i => `${i.cantidad}x ${i.producto.nombre}`),
-      avisos.length === 0,
+      resp,
+      resultado.items.map(i => `${i.cantidad}x ${i.producto.nombre}`),
+      resultado.items.length > 0 && resultado.dudas.length === 0 && avisos.length === 0,
       jergaDetectada
     );
+  }
+
+  // ---------- Pedido en construcción: sugerencias, cantidades y registro ----------
+
+  /** El comensal elige un plato de las sugerencias: se agrega con la cantidad entendida. */
+  elegirSugerencia(idDuda: number, idProducto: number): void {
+    const duda = this.dudas().find(d => d.id === idDuda);
+    const opcion = duda?.opciones.find(o => o.producto.id_producto === idProducto);
+    if (!duda || !opcion) return;
+
+    this.dudas.update(lista => lista.filter(d => d.id !== idDuda));
+    const actual = this.interpretedOrder();
+    this.actualizarPedido(this.sumarItem(actual?.items ?? [], opcion.producto, duda.cantidad));
+
+    const pendientes = this.dudas().length;
+    const resp = `Perfecto, agregué ${duda.cantidad} ${opcion.producto.nombre} a tu pedido. ` +
+      (pendientes > 0 ? 'Aún falta elegir otro plato.' : '¿Lo confirmo o agregas algo más?');
+    this.voiceState.set(pendientes > 0 ? 'clarification' : 'identified');
+    this.meiResponse.set(resp);
+    this.speak(resp);
+  }
+
+  /** "Ninguno de estos": se descarta la sugerencia sin agregar nada. */
+  descartarDuda(idDuda: number): void {
+    const duda = this.dudas().find(d => d.id === idDuda);
+    if (!duda) return;
+    this.dudas.update(lista => lista.filter(d => d.id !== idDuda));
+    const resp = `Entendido, no agregué "${duda.texto}". Puedes decir o escribir el nombre del plato.`;
+    this.voiceState.set(this.dudas().length > 0 || !this.tieneItems() ? 'clarification' : 'ready_to_confirm');
+    this.meiResponse.set(resp);
+    this.speak(resp);
+  }
+
+  /** Corrige la cantidad de un plato del resumen; si llega a 0 se elimina. */
+  cambiarCantidad(idProducto: number, delta: number): void {
+    const actual = this.interpretedOrder();
+    if (!actual) return;
+    const items = actual.items
+      .map(i => i.producto.id_producto === idProducto ? { ...i, cantidad: i.cantidad + delta } : i)
+      .filter(i => i.cantidad > 0);
+    this.actualizarPedido(items);
+    if (!this.tieneItems()) this.voiceState.set('clarification');
+  }
+
+  quitarItem(idProducto: number): void {
+    const actual = this.interpretedOrder();
+    if (!actual) return;
+    this.actualizarPedido(actual.items.filter(i => i.producto.id_producto !== idProducto));
+    if (!this.tieneItems() && this.dudas().length === 0) this.voiceState.set('clarification');
+  }
+
+  /** Empieza el pedido de nuevo sin cerrar la conversación. */
+  vaciarPedido(): void {
+    this.interpretedOrder.set(null);
+    this.dudas.set([]);
+    this.sesionesDelPedido = [];
+    this.voiceState.set('idle');
+    this.meiResponse.set('Listo, empecemos de nuevo. ¿Qué te preparo?');
+  }
+
+  /** Tras registrar el pedido: muestra la confirmación y deja a Mei lista para otro pedido. */
+  marcarRegistrado(codigo: string, total: number): void {
+    for (const id of this.sesionesDelPedido) this.metricasService.vincularPedido(id, codigo);
+    this.sesionesDelPedido = [];
+    this.interpretedOrder.set(null);
+    this.dudas.set([]);
+    this.transcript.set('');
+    this.pedidoRegistrado.set({ codigo, total });
+    this.voiceState.set('registered');
+    const resp = `¡Listo! Registré tu pedido ${codigo} por S/ ${total.toFixed(2)}. Ya está en la cola del wok.`;
+    this.meiResponse.set(resp);
+    this.speak(resp);
+  }
+
+  private tieneItems(): boolean {
+    return (this.interpretedOrder()?.items.length ?? 0) > 0;
+  }
+
+  private sumarItem(items: InterpretedItem[], producto: Producto, cantidad: number): InterpretedItem[] {
+    const existe = items.find(i => i.producto.id_producto === producto.id_producto);
+    if (existe) {
+      return items.map(i => i === existe ? { ...i, cantidad: i.cantidad + cantidad } : i);
+    }
+    return [...items, { producto, cantidad, subtotal: 0 }];
+  }
+
+  /** Recalcula subtotales y totales (IGV incluido) del pedido en construcción. */
+  private actualizarPedido(items: InterpretedItem[], extra: Partial<InterpretedOrder> = {}): void {
+    const actual = this.interpretedOrder();
+    const conSubtotal = items.map(i => ({ ...i, subtotal: Math.round(i.cantidad * i.producto.precio * 100) / 100 }));
+    const { subtotal, impuestos, total } = calcularTotales(conSubtotal.reduce((s, i) => s + i.subtotal, 0));
+    this.interpretedOrder.set({
+      tipoEntrega: 'delivery',
+      modificadoresJerga: [],
+      notasGenerales: '',
+      avisos: [],
+      ...actual,
+      ...extra,
+      items: conSubtotal,
+      subtotal,
+      impuestos,
+      total
+    });
+  }
+
+  private listar(items: ReadonlyArray<{ producto: Producto; cantidad: number }>): string {
+    const partes = items.map(i => `${i.cantidad} ${i.producto.nombre}`);
+    return partes.length > 1 ? `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}` : partes[0];
+  }
+
+  /** Pregunta de Mei para cada duda pendiente. */
+  private preguntasDeDudas(): string[] {
+    return this.dudas().map(d => {
+      if (d.tipo === 'probable') return `¿Te refieres a ${d.opciones[0].producto.nombre}?`;
+      if (d.tipo === 'no_existe') {
+        return d.opciones.length > 0
+          ? `No tenemos "${d.texto}" en la carta. ¿Quieres alguno de estos?`
+          : `No tenemos "${d.texto}" en la carta.`;
+      }
+      return `Encontré platos parecidos a "${d.texto}". ¿Cuál deseas?`;
+    });
   }
 
   private recordVoiceSession(
@@ -413,6 +524,7 @@ export class VoiceAiService {
       estado: exitosa ? 'finalizada' : 'aclarando'
     };
     this.ultimaSesionId = sesion.id_sesion;
+    this.sesionesDelPedido.push(sesion.id_sesion);
     this.metricasService.registrarSesion(sesion);
   }
 
@@ -424,5 +536,8 @@ export class VoiceAiService {
     this.errorMessage.set(null);
     this.voiceState.set('idle');
     this.interpretedOrder.set(null);
+    this.dudas.set([]);
+    this.pedidoRegistrado.set(null);
+    this.sesionesDelPedido = [];
   }
 }

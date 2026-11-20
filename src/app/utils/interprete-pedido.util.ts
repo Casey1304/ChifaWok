@@ -14,21 +14,49 @@ export interface ItemInterpretado {
   cantidad: number;
 }
 
-export interface AmbiguedadPedido {
-  /** Palabra genérica dicha por el comensal (p. ej. "pollo"). */
-  termino: string;
+export interface OpcionSugerida {
+  producto: Producto;
+  /** Similitud 0-1 entre lo escuchado y el plato (1 = idéntico). */
+  puntaje: number;
+}
+
+/**
+ * Fragmento del pedido que Mei no puede resolver con certeza:
+ * - 'probable': un plato destaca claramente (coincidencia alta): se propone y se pide confirmar.
+ * - 'ambiguo': varias opciones razonables (coincidencia media o palabra genérica como "pollo").
+ * - 'no_existe': el plato pedido no está en la carta ("chaufa de pollo"); se ofrecen parecidos.
+ */
+export interface DudaPedido {
+  /** Texto tal como se entendió (p. ej. "pollo tip packay"). */
+  texto: string;
   cantidad: number;
-  opciones: Producto[];
+  tipo: 'probable' | 'ambiguo' | 'no_existe';
+  opciones: OpcionSugerida[];
 }
 
 export interface ResultadoInterpretacion {
   items: ItemInterpretado[];
-  /** Fragmentos con cantidad que no corresponden a ningún plato de la carta. */
+  /** Fragmentos con cantidad sin ninguna coincidencia confiable en la carta. */
   noReconocidos: string[];
   /** Platos de la carta mencionados que hoy están pausados o agotados. */
   noDisponibles: Producto[];
-  ambiguos: AmbiguedadPedido[];
+  /** Fragmentos que requieren que el comensal elija o confirme un plato. */
+  dudas: DudaPedido[];
 }
+
+/**
+ * Umbrales de similitud calibrados con la carta real (ver interprete-pedido.util.spec.ts):
+ * - UMBRAL_ALTO: por encima de la similitud máxima medida entre términos de platos distintos,
+ *   de modo que un plato "probable" no se confunde con otro de la carta.
+ * - UMBRAL_MEDIO: los errores de transcripción probados quedan por encima; lo que queda por
+ *   debajo no se sugiere y se informa como no reconocido.
+ */
+export const UMBRAL_ALTO = 0.8;
+export const UMBRAL_MEDIO = 0.6;
+/** Diferencia mínima con la segunda opción para proponer un único plato. */
+export const MARGEN_PROBABLE = 0.12;
+/** Máximo de opciones mostradas en el selector. */
+export const MAX_OPCIONES = 4;
 
 const NUMEROS: Readonly<Record<string, number>> = {
   un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
@@ -52,7 +80,7 @@ const RELLENO = new Set([
 /** Variantes frecuentes de transcripción → forma usada en la carta. */
 const ALIAS: ReadonlyArray<[RegExp, string]> = [
   [/\binca\b/g, 'inka'],
-  [/\binka cola\b/g, 'inka kola'],
+  [/\binka (cola|colas|kolas)\b/g, 'inka kola'],
   [/\b(chau fa|chofa|shaufa|chaufa)\b/g, 'chaufa'],
   [/\b(wan tan|won ton|wonton|guantan|wantan)\b/g, 'wantan'],
   [/\btipa kai\b/g, 'tipa kay'],
@@ -65,8 +93,8 @@ const ALIAS: ReadonlyArray<[RegExp, string]> = [
  * Términos genéricos que el comensal suele usar en lugar del nombre exacto.
  * Se resuelven contra la carta: si hay una sola opción se usa; si hay varias, se pregunta.
  */
-const GENERICOS: ReadonlyArray<{ palabra: string; coincide: (terminos: string[]) => boolean }> = [
-  { palabra: 'chaufa', coincide: t => t.some(x => x.includes('chaufa')) },
+const GENERICOS: ReadonlyArray<{ palabra: string; coincide: (terminos: string[], categoria: string) => boolean }> = [
+  { palabra: 'chaufa', coincide: (t, cat) => t.some(x => x.includes('chaufa')) || cat.includes('chaufa') },
   { palabra: 'arroz', coincide: t => t.some(x => x.includes('chaufa') || x.includes('arroz')) },
   { palabra: 'sopa', coincide: t => t.some(x => x.includes('sopa')) },
   { palabra: 'gaseosa', coincide: t => t.some(x => x.includes('kola') || x.includes('gaseosa')) },
@@ -147,6 +175,54 @@ function coincidir(tokens: string[], seq: string[], desde: number): number {
   return i;
 }
 
+/**
+ * Clave fonética para comparar transcripciones imperfectas con la carta:
+ * une las palabras y aplica equivalencias del español hablado y escrito
+ * (ch, c/qu/k, z/s, ll/y, h muda, j≈h, v/b, "y" final como "i", letras dobles).
+ */
+export function claveFonetica(tokens: ReadonlyArray<string>): string {
+  return tokens
+    .filter(t => !CONECTORES.has(t))
+    .map(t => t.replace(/y$/, 'i'))
+    .join('')
+    .replace(/ch/g, '1')
+    .replace(/qu/g, 'k')
+    .replace(/c(?=[ei])/g, 's')
+    .replace(/c/g, 'k')
+    .replace(/z/g, 's')
+    .replace(/v/g, 'b')
+    .replace(/ll/g, 'y')
+    .replace(/[hj]/g, '')
+    .replace(/(.)\1+/g, '$1');
+}
+
+function levenshtein(a: string, b: string): number {
+  const fila = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = fila[0];
+    fila[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const arriba = fila[j];
+      fila[j] = Math.min(fila[j] + 1, fila[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = arriba;
+    }
+  }
+  return fila[b.length];
+}
+
+/**
+ * Similitud 0-1 entre dos claves fonéticas (Levenshtein normalizado). Si lo escuchado es
+ * el comienzo del nombre ("tipa" → "tipakai") se valora como nombre parcialmente pronunciado.
+ */
+export function similitud(escuchado: string, termino: string): number {
+  if (!escuchado || !termino) return 0;
+  const base = 1 - levenshtein(escuchado, termino) / Math.max(escuchado.length, termino.length);
+  const parcial = escuchado.length >= 4 && termino.startsWith(escuchado)
+    ? 0.6 + 0.3 * (escuchado.length / termino.length)
+    : 0;
+  return Math.round(Math.max(base, parcial) * 1000) / 1000;
+}
+
 export function interpretarPedido(texto: string, productos: ReadonlyArray<Producto>): ResultadoInterpretacion {
   const tokens = tokenizarPedido(texto);
   const usados = tokens.map(() => false);
@@ -193,35 +269,96 @@ export function interpretarPedido(texto: string, productos: ReadonlyArray<Produc
     else acumulado.set(producto.id_producto, { producto, cantidad });
   };
 
+  const categoriaDe = (p: Producto) => normalizarTexto(p.categoria_nombre);
   for (const c of elegidos) {
+    // "pollo tipakay": la palabra genérica pegada a un plato que la contiene es parte del mismo ítem.
+    const previo = tokens[c.inicio - 1];
+    const generico = GENERICOS.find(g => g.palabra === previo);
+    const terminosProducto = (terminos.find(t => t.producto === c.producto)?.seqs || []).map(x => x.join(' '));
+    if (generico && !usados[c.inicio - 1] && generico.coincide(terminosProducto, categoriaDe(c.producto))) {
+      usados[c.inicio - 1] = true;
+      c.inicio -= 1;
+    }
     agregar(c.producto, cantidadPrevia(tokens, c.inicio, usados, c.seq[0] === 'docena'));
   }
 
-  // 3. Términos genéricos ("una sopa", "dos gaseosas", "pollo"...).
   const noReconocidos: string[] = [];
-  const ambiguos: AmbiguedadPedido[] = [];
+  const dudas: DudaPedido[] = [];
+  const disponibles = terminos.filter(t => t.producto.disponible);
+  const clavesProducto = disponibles.map(t => ({ producto: t.producto, claves: t.seqs.map(claveFonetica) }));
+
+  /** Opciones de la carta ordenadas por similitud con lo escuchado (≥ umbral medio). */
+  const rankear = (clave: string): OpcionSugerida[] => clavesProducto
+    .map(({ producto, claves }) => ({ producto, puntaje: Math.max(...claves.map(k => similitud(clave, k))) }))
+    .filter(o => o.puntaje >= UMBRAL_MEDIO)
+    .sort((a, b) => b.puntaje - a.puntaje);
+
+  // 2b. Búsqueda aproximada en los fragmentos sin resolver ("pollo tip packay", "inka colas").
+  const esPalabraDePlato = (i: number) => i >= 0 && i < tokens.length && !usados[i] &&
+    !SEPARADORES.has(tokens[i]) && !RELLENO.has(tokens[i]) && cantidadDe(tokens[i], tokens[i + 1]) === null;
+  const contieneGenerico = (inicio: number, fin: number) =>
+    tokens.slice(inicio, fin).some(t => GENERICOS.some(g => g.palabra === t));
+  const tramos: { inicio: number; fin: number; ranking: OpcionSugerida[] }[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (!esPalabraDePlato(i)) continue;
+    for (let fin = i + 1; fin <= Math.min(tokens.length, i + 5); fin++) {
+      const t = tokens[fin - 1];
+      if (usados[fin - 1] || SEPARADORES.has(t) || cantidadDe(t, tokens[fin]) !== null) break;
+      if (!esPalabraDePlato(fin - 1)) continue; // un tramo no termina en relleno ni conector
+      if (fin - i === 1 && GENERICOS.some(g => g.palabra === tokens[i])) continue; // "pollo" solo: selector por familia
+      const clave = claveFonetica(tokens.slice(i, fin));
+      if (clave.length < 4) continue; // claves muy cortas generan falsos positivos
+      const ranking = rankear(clave);
+      // Con una palabra genérica ("chaufa de pollo") solo se acepta una coincidencia alta;
+      // si no, decide el paso de genéricos (familia de platos o "no existe en la carta").
+      if (ranking.length > 0 && (ranking[0].puntaje >= UMBRAL_ALTO || !contieneGenerico(i, fin))) {
+        tramos.push({ inicio: i, fin, ranking });
+      }
+    }
+  }
+  tramos.sort((a, b) => b.ranking[0].puntaje - a.ranking[0].puntaje || (b.fin - b.inicio) - (a.fin - a.inicio));
+  for (const tramo of tramos) {
+    let libre = true;
+    for (let i = tramo.inicio; i < tramo.fin; i++) if (usados[i]) libre = false;
+    if (!libre) continue;
+    for (let i = tramo.inicio; i < tramo.fin; i++) usados[i] = true;
+    const [mejor, segunda] = tramo.ranking;
+    const probable = mejor.puntaje >= UMBRAL_ALTO && (!segunda || mejor.puntaje - segunda.puntaje >= MARGEN_PROBABLE);
+    dudas.push({
+      texto: tokens.slice(tramo.inicio, tramo.fin).join(' '),
+      cantidad: cantidadPrevia(tokens, tramo.inicio, usados, false),
+      tipo: probable ? 'probable' : 'ambiguo',
+      opciones: tramo.ranking.slice(0, MAX_OPCIONES)
+    });
+  }
+
+  // 3. Términos genéricos ("una sopa", "dos gaseosas", "pollo"...).
+
   for (let i = 0; i < tokens.length; i++) {
     if (usados[i]) continue;
     const generico = GENERICOS.find(g => g.palabra === tokens[i]);
     if (!generico) continue;
 
     usados[i] = true;
-    // "chaufa de pollo", "sopa con fideos": variante con calificador que no existe en la carta.
-    const calificador = (tokens[i + 1] === 'de' || tokens[i + 1] === 'con') &&
-      tokens[i + 2] && !usados[i + 2] && !SEPARADORES.has(tokens[i + 2]) && cantidadDe(tokens[i + 2], tokens[i + 3]) === null;
-    const cantidad = cantidadPrevia(tokens, i, usados, false);
-    if (calificador) {
-      usados[i + 1] = usados[i + 2] = true;
-      noReconocidos.push(`${tokens[i]} ${tokens[i + 1]} ${tokens[i + 2]}`);
+    // Palabras de plato pegadas a la genérica ("chaufa de pollo", "lomo saltado"): variante que no
+    // existe en la carta. Nunca se autocompleta: se informa y se ofrecen los platos de esa familia.
+    let inicio = i;
+    let fin = i + 1;
+    if (i > 0 && esPalabraDePlato(i - 1)) inicio = i - 1;
+    if ((tokens[i + 1] === 'de' || tokens[i + 1] === 'con') && esPalabraDePlato(i + 2)) fin = i + 3;
+    else if (esPalabraDePlato(i + 1)) fin = i + 2;
+    for (let k = inicio; k < fin; k++) usados[k] = true;
+    const cantidad = cantidadPrevia(tokens, inicio, usados, false);
+    const opciones = disponibles
+      .filter(t => generico.coincide(t.seqs.map(x => x.join(' ')), categoriaDe(t.producto)))
+      .map(t => ({ producto: t.producto, puntaje: 1 }));
+    if (fin - inicio > 1) {
+      dudas.push({ texto: tokens.slice(inicio, fin).join(' '), cantidad, tipo: 'no_existe', opciones: opciones.slice(0, MAX_OPCIONES) });
       continue;
     }
 
-    const opciones = terminos
-      .filter(t => generico.coincide(t.seqs.map(s => s.join(' '))))
-      .map(t => t.producto)
-      .filter(p => p.disponible);
-    if (opciones.length === 1) agregar(opciones[0], cantidad);
-    else if (opciones.length > 1) ambiguos.push({ termino: tokens[i], cantidad, opciones });
+    if (opciones.length === 1) agregar(opciones[0].producto, cantidad);
+    else if (opciones.length > 1) dudas.push({ texto: tokens[i], cantidad, tipo: 'ambiguo', opciones: opciones.slice(0, MAX_OPCIONES) });
     else noReconocidos.push(tokens[i]);
   }
 
@@ -251,6 +388,6 @@ export function interpretarPedido(texto: string, productos: ReadonlyArray<Produc
     items: [...acumulado.values()],
     noReconocidos,
     noDisponibles,
-    ambiguos
+    dudas
   };
 }
