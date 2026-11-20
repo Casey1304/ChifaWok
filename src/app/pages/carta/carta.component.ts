@@ -6,6 +6,7 @@ import { CartService } from '../../services/cart.service';
 import { VoiceAiService } from '../../services/voice-ai.service';
 import { NotificationService } from '../../services/notification.service';
 import { Producto } from '../../models/producto.model';
+import { filtrarProductos } from '../../utils/filtros.util';
 
 @Component({
   selector: 'app-carta',
@@ -37,13 +38,17 @@ import { Producto } from '../../models/producto.model';
             <span class="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg">search</span>
             <input
               type="text"
-              [(ngModel)]="searchTerm"
+              [ngModel]="searchTerm()"
+              (ngModelChange)="searchTerm.set($event)"
               placeholder="Buscar chaufa, tallarín, wantán..."
-              class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-outline-variant/60 focus:border-primary focus:outline-hidden bg-surface-container-low text-xs sm:text-sm font-medium"
+              aria-label="Buscar platos en la carta"
+              class="w-full pl-10 pr-10 py-2.5 rounded-xl border border-outline-variant/60 focus:border-primary focus:outline-hidden bg-surface-container-low text-xs sm:text-sm font-medium"
             />
             <button
-              *ngIf="searchTerm"
-              (click)="searchTerm = ''"
+              *ngIf="searchTerm()"
+              type="button"
+              (click)="searchTerm.set('')"
+              aria-label="Limpiar búsqueda"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
             >
               <span class="material-symbols-outlined text-sm">close</span>
@@ -98,12 +103,15 @@ import { Producto } from '../../models/producto.model';
         <!-- Empty State -->
         <div *ngIf="filteredProductos().length === 0" class="p-12 text-center rounded-2xl bg-surface border border-outline-variant/30 my-8">
           <span class="material-symbols-outlined text-6xl text-outline-variant/50 mb-3">search_off</span>
-          <h3 class="font-headline-md text-lg font-bold text-on-surface">No encontramos platos con "{{ searchTerm }}"</h3>
+          <h3 class="font-headline-md text-lg font-bold text-on-surface">
+            {{ searchTerm().trim() ? 'No encontramos platos con "' + searchTerm().trim() + '"' : 'No hay platos disponibles en esta categoría' }}
+          </h3>
           <p class="text-xs text-on-surface-variant mt-1 max-w-sm mx-auto">
             Prueba buscando con palabras como "chaufa", "pollo", "wantán" o borra el filtro para ver toda la carta.
           </p>
           <button
-            (click)="searchTerm = ''; selectedCategoriaId.set(null)"
+            type="button"
+            (click)="searchTerm.set(''); selectedCategoriaId.set(null)"
             class="mt-4 px-5 py-2 rounded-full bg-primary text-white text-xs font-bold hover:bg-surface-tint"
           >
             Restablecer Filtros
@@ -180,29 +188,12 @@ import { Producto } from '../../models/producto.model';
   `
 })
 export class CartaComponent {
-  searchTerm = '';
+  readonly searchTerm = signal<string>('');
   readonly selectedCategoriaId = signal<number | null>(null);
 
-  readonly filteredProductos = computed(() => {
-    let list = this.productosService.productosActivos();
-
-    const catId = this.selectedCategoriaId();
-    if (catId !== null) {
-      list = list.filter(p => p.id_categoria === catId);
-    }
-
-    const term = this.searchTerm.trim().toLowerCase();
-    if (term) {
-      list = list.filter(p => 
-        p.nombre.toLowerCase().includes(term) ||
-        p.descripcion.toLowerCase().includes(term) ||
-        p.categoria_nombre.toLowerCase().includes(term) ||
-        (p.sinonimos_voz || []).some(s => s.toLowerCase().includes(term))
-      );
-    }
-
-    return list;
-  });
+  readonly filteredProductos = computed(() =>
+    filtrarProductos(this.productosService.productosActivos(), this.selectedCategoriaId(), this.searchTerm())
+  );
 
   constructor(
     public productosService: ProductosService,
