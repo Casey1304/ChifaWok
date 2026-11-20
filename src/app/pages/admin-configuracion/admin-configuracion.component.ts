@@ -138,6 +138,43 @@ import { NotificationService } from '../../services/notification.service';
                 <p class="text-[11px] text-on-surface-variant">Confirmación auditiva hablada para las respuestas de Mei.</p>
               </div>
             </div>
+
+            <!-- Voz de Mei -->
+            <div *ngIf="ttsSoportado" class="p-3.5 rounded-xl bg-surface-container-low border border-surface-container space-y-2.5 text-xs">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-bold text-on-surface">Voz de Mei</span>
+                <span *ngIf="voice.vozActual() as v" class="text-[11px] text-on-surface-variant">
+                  En uso: <strong class="text-on-surface">{{ v.nombre }}</strong> ({{ v.idioma }}, {{ v.genero }})
+                </span>
+              </div>
+              <div class="flex flex-col sm:flex-row gap-2">
+                <select
+                  [ngModel]="vozElegida"
+                  (ngModelChange)="cambiarVoz($event)"
+                  aria-label="Voz de Mei"
+                  class="flex-1 min-w-0 text-xs px-3 py-2 rounded-xl border border-outline-variant bg-surface"
+                >
+                  <option value="">Automática (femenina en español latinoamericano)</option>
+                  <option *ngFor="let v of voice.vocesDisponibles()" [value]="v.voiceURI || v.name">
+                    {{ v.name }} · {{ v.lang }}
+                  </option>
+                </select>
+                <button
+                  type="button"
+                  (click)="probarVoz()"
+                  class="px-4 py-2 rounded-xl border border-outline-variant text-xs font-bold hover:bg-surface-container flex items-center justify-center gap-1.5"
+                >
+                  <span class="material-symbols-outlined text-base">{{ voice.isSpeaking() ? 'stop_circle' : 'record_voice_over' }}</span>
+                  {{ voice.isSpeaking() ? 'Detener' : 'Probar voz' }}
+                </button>
+              </div>
+              <p *ngIf="voice.vocesDisponibles().length === 0" class="text-[11px] text-amber-800">
+                El navegador no informa voces en español: Mei usará la voz predeterminada del sistema.
+              </p>
+              <p class="text-[11px] text-on-surface-variant">
+                Las voces dependen del navegador y de Windows. Microsoft Edge ofrece voces naturales (por ejemplo, Camila o Dalia).
+              </p>
+            </div>
           </div>
 
           <!-- Reset demo data -->
@@ -180,6 +217,24 @@ export class AdminConfiguracionComponent {
     const guardadas = this.storage.get<{ springBootUrl?: string; fastApiUrl?: string } | null>(this.URLS_KEY, null);
     if (guardadas?.springBootUrl) this.springBootUrl = guardadas.springBootUrl;
     if (guardadas?.fastApiUrl) this.fastApiUrl = guardadas.fastApiUrl;
+  }
+
+  /** URI de la voz preferida ('' = automática). */
+  get vozElegida(): string {
+    return this.storage.get<string | null>('voz_mei', null) ?? '';
+  }
+
+  cambiarVoz(uri: string): void {
+    this.voice.setVozPreferida(uri || null);
+    this.probarVoz();
+  }
+
+  probarVoz(): void {
+    if (this.voice.isSpeaking()) {
+      this.voice.stopSpeaking();
+      return;
+    }
+    this.voice.speak('¡Hola! Soy Mei. Te recomiendo el Pollo Tipa Kay, un Arroz Chaufa Especial con Wantán Frito y una Inka Kola bien helada. Tu pedido suma S/ 75.00.');
   }
 
   /**

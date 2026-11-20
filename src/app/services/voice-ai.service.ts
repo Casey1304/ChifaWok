@@ -6,6 +6,8 @@ import { SesionVoz } from '../models/sesion-voz.model';
 import { AuthService } from './auth.service';
 import { DudaPedido, interpretarPedido } from '../utils/interprete-pedido.util';
 import { calcularTotales } from '../utils/totales.util';
+import { elegirVoz, generoDeVoz, GeneroVoz, ordenarVoces, textoParaVoz } from '../utils/voz.util';
+import { StorageService } from './storage.service';
 
 export type VoiceState =
   | 'idle' | 'listening' | 'processing' | 'speaking' | 'clarification'
@@ -44,11 +46,20 @@ export class VoiceAiService {
   private recognition: any = null;
   private synth: SpeechSynthesis | null = null;
   private selectedVoice: SpeechSynthesisVoice | null = null;
+  private readonly VOZ_KEY = 'voz_mei';
+  private vozPreferidaURI: string | null = null;
+  /** Turno de la última respuesta: impide que dos respuestas de Mei suenen a la vez. */
+  private turnoVoz = 0;
+  private textoPendiente: string | null = null;
 
   // Reactive state signals
   readonly isBrowserSupported = signal<boolean>(true);
   readonly isListening = signal<boolean>(false);
   readonly isSpeaking = signal<boolean>(false);
+  /** Voces en español del navegador, de mejor a peor para Mei. */
+  readonly vocesDisponibles = signal<SpeechSynthesisVoice[]>([]);
+  /** Voz que usa Mei actualmente. */
+  readonly vozActual = signal<{ nombre: string; idioma: string; genero: GeneroVoz; uri: string } | null>(null);
   readonly voiceState = signal<VoiceState>('idle');
   readonly transcript = signal<string>('');
   readonly meiResponse = signal<string>('');
@@ -74,7 +85,8 @@ export class VoiceAiService {
   constructor(
     private productosService: ProductosService,
     private metricasService: MetricasService,
-    private auth: AuthService
+    private auth: AuthService,
+    private storage: StorageService
   ) {
     this.initSpeechRecognition();
     this.initSpeechSynthesis();
@@ -151,20 +163,95 @@ export class VoiceAiService {
   private initSpeechSynthesis(): void {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       this.synth = window.speechSynthesis;
-      const loadVoices = () => {
-        const voices = this.synth?.getVoices() || [];
-        this.selectedVoice = voices.find(v => v.lang.includes('es-PE')) ||
-                             voices.find(v => v.lang.includes('es-419')) ||
-                             voices.find(v => v.lang.includes('es-ES')) ||
-                             voices.find(v => v.lang.startsWith('es')) ||
-                             null;
-      };
-      loadVoices();
-      if (this.synth.onvoiceschanged !== undefined) {
-        this.synth.onvoiceschanged = loadVoices;
-      }
+      this.vozPreferidaURI = this.storage.get<string | null>(this.VOZ_KEY, null);
+      this.cargarVoces();
+      // Chrome y Edge cargan las voces de forma asíncrona: se vuelve a elegir al recibirlas.
+      this.synth.addEventListener?.('voiceschanged', () => this.cargarVoces());
     }
   }
+
+  /** Elige la voz de Mei: la preferida guardada o la mejor femenina en español disponible. */
+  private cargarVoces(): void {
+    const voces = this.synth?.getVoices() ?? [];
+    this.vocesDisponibles.set(ordenarVoces(voces));
+    this.selectedVoice = elegirVoz(voces, this.vozPreferidaURI);
+    const v = this.selectedVoice;
+    this.vozActual.set(v ? { nombre: v.name, idioma: v.lang, genero: generoDeVoz(v), uri: v.voiceURI || v.name } : null);
+    // Si Mei quiso hablar antes de que las voces estuvieran listas, lo hace ahora con la voz correcta.
+    if (voces.length > 0 && this.textoPendiente) {
+      const texto = this.textoPendiente;
+      this.textoPendiente = null;
+      this.speak(texto);
+    }
+  }
+
+  /** Guarda (o borra, con null) la voz preferida para Mei. */
+  setVozPreferida(uri: string | null): void {
+    this.vozPreferidaURI = uri;
+    if (uri) this.storage.set(this.VOZ_KEY, uri);
+    else this.storage.remove(this.VOZ_KEY);
+    this.cargarVoces();
+  }
+
+  /**
+   * Mei habla. Siempre cancela la respuesta anterior (nunca se superponen) y usa el texto
+   * adaptado para la pronunciación; lo que se muestra en pantalla no cambia.
+   */
+  speak(text: string): void {
+    if (!this.synth || !text) return;
+    const turno = ++this.turnoVoz;
+    this.synth.cancel();
+    this.isSpeaking.set(false);
+
+    if (!this.selectedVoice && this.synth.getVoices().length === 0) {
+      // Las voces aún no cargan: se habla al llegar "voiceschanged" (o a los 1.5 s como máximo).
+      this.textoPendiente = text;
+      setTimeout(() => {
+        if (this.textoPendiente === text && turno === this.turnoVoz) {
+          this.textoPendiente = null;
+          this.reproducir(text, turno);
+        }
+      }, 1500);
+      return;
+    }
+    // Pequeña pausa tras cancel(): en Chrome un speak() inmediato a veces se descarta.
+    setTimeout(() => this.reproducir(text, turno), 60);
+  }
+
+  private reproducir(text: string, turno: number): void {
+    if (!this.synth || turno !== this.turnoVoz) return; // llegó una respuesta más nueva
+    const utterance = new SpeechSynthesisUtterance(textoParaVoz(text));
+    if (this.selectedVoice) {
+      utterance.voice = this.selectedVoice;
+      utterance.lang = this.selectedVoice.lang;
+    } else {
+      utterance.lang = 'es-PE';
+    }
+    utterance.rate = 0.95;  // ritmo moderado y claro
+    utterance.pitch = 1.05; // tono ligeramente cálido
+
+    utterance.onstart = () => {
+      if (turno === this.turnoVoz) this.isSpeaking.set(true);
+    };
+    utterance.onend = () => {
+      if (turno === this.turnoVoz) this.isSpeaking.set(false);
+    };
+    utterance.onerror = () => {
+      if (turno === this.turnoVoz) this.isSpeaking.set(false);
+    };
+
+    this.synth.speak(utterance);
+  }
+
+  stopSpeaking(): void {
+    this.turnoVoz++;
+    this.textoPendiente = null;
+    if (this.synth) {
+      this.synth.cancel();
+      this.isSpeaking.set(false);
+    }
+  }
+
 
   openModal(): void {
     this.isModalOpen.set(true);
@@ -225,37 +312,7 @@ export class VoiceAiService {
     }
   }
 
-  speak(text: string): void {
-    if (!this.synth) return;
-    this.synth.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (this.selectedVoice) {
-      utterance.voice = this.selectedVoice;
-    }
-    utterance.lang = 'es-PE';
-    utterance.rate = 1.05;
-    utterance.pitch = 1.0;
-
-    utterance.onstart = () => {
-      this.isSpeaking.set(true);
-    };
-    utterance.onend = () => {
-      this.isSpeaking.set(false);
-    };
-    utterance.onerror = () => {
-      this.isSpeaking.set(false);
-    };
-
-    this.synth.speak(utterance);
-  }
-
-  stopSpeaking(): void {
-    if (this.synth) {
-      this.synth.cancel();
-      this.isSpeaking.set(false);
-    }
-  }
 
   processManualText(text: string): void {
     if (!text || text.trim().length === 0) return;

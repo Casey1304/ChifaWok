@@ -187,6 +187,19 @@ En el resumen se pueden cambiar cantidades, eliminar platos o seguir hablando pa
 
 Si el micrófono está bloqueado, no hay voz o no hay conexión, Mei muestra el motivo y permite escribir el pedido.
 
+**Voz de Mei.** Mei responde con la síntesis de voz del navegador (`speechSynthesis`), sin servicios externos:
+
+- **Elección de la voz** (`src/app/utils/voz.util.ts`): elige automáticamente una voz **femenina en español latinoamericano**, en este orden de preferencia:
+  1. Perú, como Camila Natural en Edge.
+  2. México, como Sabina o Dalia.
+  3. Otra voz femenina en español.
+  4. La mejor voz en español disponible, si no hay ninguna femenina.
+- **Cambiar la voz:** en **Configuración → Voz de Mei** se elige otra voz y se prueba; la elección se guarda.
+- **Velocidad y tono:** 0,95 y 1,05.
+- **Disponibilidad:** las voces dependen del navegador y de Windows. Edge ofrece voces «Natural» de mejor calidad.
+- **Pronunciación:** solo al hablar, Mei adapta algunos nombres: Tipa Kay → «Tipa Cai», Chi Jau Kay → «Chi Yau Cai», Wantán → «guantán», Inka Kola → «Inca Cola», «S/ 73.00» → «73 soles», «#1045» → «número 1045». En pantalla, pedidos y datos se conservan los nombres originales.
+- **Reproducción:** cada respuesta nueva corta la anterior, así que nunca suenan dos a la vez. «Escuchar de nuevo» repite la última respuesta y cambia a «Detener voz» mientras Mei habla.
+
 **Requisitos:** Chrome o Edge, permiso de micrófono, conexión a Internet y abrir la app en `localhost` o `https`.
 
 ---

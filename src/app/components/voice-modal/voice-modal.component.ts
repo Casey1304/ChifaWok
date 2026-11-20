@@ -101,11 +101,12 @@ import { NotificationService } from '../../services/notification.service';
               
               <button
                 *ngIf="voice.meiResponse()"
-                (click)="voice.speak(voice.meiResponse())"
+                type="button"
+                (click)="voice.isSpeaking() ? voice.stopSpeaking() : voice.speak(voice.meiResponse())"
                 class="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-tertiary hover:underline"
               >
-                <span class="material-symbols-outlined text-xs">volume_up</span>
-                Escuchar de nuevo
+                <span class="material-symbols-outlined text-xs">{{ voice.isSpeaking() ? 'stop_circle' : 'volume_up' }}</span>
+                {{ voice.isSpeaking() ? 'Detener voz' : 'Escuchar de nuevo' }}
               </button>
             </div>
           </div>
