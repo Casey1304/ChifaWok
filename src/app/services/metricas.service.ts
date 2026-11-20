@@ -1,7 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { StorageService } from './storage.service';
 import { PedidosService } from './pedidos.service';
-import { MetricasDashboard } from '../models/metricas.model';
 import { SesionVoz } from '../models/sesion-voz.model';
 
 @Injectable({
@@ -15,10 +14,71 @@ export class MetricasService {
   readonly totalSesiones = computed(() => this.sesiones().length);
   readonly sesionesExitosas = computed(() => this.sesiones().filter(s => s.exitosa).length);
 
+  /** Porcentaje de sesiones de voz interpretadas sin aclaraciones. */
   readonly tasaExitoVoiceAI = computed(() => {
     const total = this.totalSesiones();
-    if (total === 0) return 98.4;
+    if (total === 0) return 0;
     return Math.round((this.sesionesExitosas() / total) * 1000) / 10;
+  });
+
+  /** Confianza media informada por el reconocimiento de voz (o 100 para texto). */
+  readonly precisionPromedio = computed(() => {
+    const lista = this.sesiones();
+    if (lista.length === 0) return 0;
+    return Math.round((lista.reduce((s, x) => s + (x.confianza || 0), 0) / lista.length) * 10) / 10;
+  });
+
+  /** Duración media (s) de las sesiones capturadas por micrófono. */
+  readonly duracionPromedio = computed(() => {
+    const conDuracion = this.sesiones().filter(s => s.duracion_segundos > 0);
+    if (conDuracion.length === 0) return 0;
+    return Math.round(conDuracion.reduce((s, x) => s + x.duracion_segundos, 0) / conDuracion.length);
+  });
+
+  readonly sesionesConPedido = computed(() => this.sesiones().filter(s => !!s.pedido_asociado_codigo).length);
+
+  /** Porcentaje de sesiones de voz que terminaron en un pedido registrado. */
+  readonly tasaConversion = computed(() => {
+    const total = this.totalSesiones();
+    if (total === 0) return 0;
+    return Math.round((this.sesionesConPedido() / total) * 1000) / 10;
+  });
+
+  /** Pedidos no cancelados agrupados por canal de origen. */
+  readonly pedidosPorCanal = computed(() => {
+    const vigentes = this.pedidosService.pedidos().filter(p => p.estado !== 'cancelado');
+    const canal = (origen: 'voice_ai' | 'web', nombre: string) => {
+      const lista = vigentes.filter(p => (p.origen || 'web') === origen);
+      return {
+        canal: nombre,
+        pedidos: lista.length,
+        ingresos: Math.round(lista.reduce((s, p) => s + p.total, 0) * 100) / 100,
+        porcentaje: vigentes.length ? Math.round((lista.length / vigentes.length) * 1000) / 10 : 0
+      };
+    };
+    return [canal('voice_ai', 'Voz (Mei)'), canal('web', 'Web (carrito)')];
+  });
+
+  readonly pedidosPorVoz = computed(() => this.pedidosPorCanal()[0].pedidos);
+
+  /** Platos más pedidos por voz (unidades), a partir de los pedidos con origen voice_ai. */
+  readonly platosMasPedidosVoz = computed(() => {
+    const unidades = new Map<string, number>();
+    this.pedidosService.pedidos()
+      .filter(p => p.origen === 'voice_ai' && p.estado !== 'cancelado')
+      .forEach(p => p.detalles.forEach(d => unidades.set(d.nombre_producto, (unidades.get(d.nombre_producto) || 0) + d.cantidad)));
+    const total = [...unidades.values()].reduce((s, n) => s + n, 0);
+    return [...unidades.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([nombre, cantidad]) => ({ nombre, cantidad, porcentaje: total ? Math.round((cantidad / total) * 1000) / 10 : 0 }));
+  });
+
+  /** Jerga chifera detectada en las sesiones de voz, con su frecuencia. */
+  readonly jergaFrecuente = computed(() => {
+    const conteo = new Map<string, number>();
+    this.sesiones().forEach(s => (s.modificadores_jerga || []).forEach(j => conteo.set(j, (conteo.get(j) || 0) + 1)));
+    return [...conteo.entries()].sort((a, b) => b[1] - a[1]).map(([termino, frecuencia]) => ({ termino, frecuencia }));
   });
 
   constructor(
@@ -39,44 +99,14 @@ export class MetricasService {
     this.storage.set(this.SESIONES_KEY, updated);
   }
 
-  getDashboardData(): MetricasDashboard {
-    const pedidos = this.pedidosService.pedidos();
-    const ventasDia = this.pedidosService.totalVentasDia();
-    const pedidosTotales = this.pedidosService.totalPedidosDia();
-    const pedidosVoz = pedidos.filter(p => p.origen === 'voice_ai').length;
-    const pedidosWeb = pedidos.filter(p => p.origen === 'web').length;
-
-    return {
-      ventas_del_dia: ventasDia > 0 ? ventasDia : 3840.50,
-      pedidos_totales: pedidosTotales > 0 ? pedidosTotales : 94,
-      pedidos_por_voz: pedidosVoz > 0 ? pedidosVoz : 68,
-      pedidos_por_web: pedidosWeb > 0 ? pedidosWeb : 26,
-      tiempo_promedio_wok_minutos: 8.5,
-      eficiencia_voice_ai_porcentaje: 98.2,
-      precision_fonetica_wok: 98.4,
-      tiempo_promedio_orden_segundos: 42,
-      upselling_exitoso_porcentaje: 34.2,
-      llamadas_simultaneas_activas: 6,
-      llamadas_hoy: 184,
-      platos_mas_pedidos_voz: [
-        { nombre: 'Arroz Chaufa Especial', porcentaje: 44.8, pedidos: 82 },
-        { nombre: 'Aeropuerto de Pollo / Carne', porcentaje: 28.3, pedidos: 52 },
-        { nombre: 'Pollo Tipakay Clásico', porcentaje: 16.4, pedidos: 30 },
-        { nombre: 'Tallarín Saltado Criollo', porcentaje: 10.5, pedidos: 20 }
-      ],
-      jerga_chifa_frecuente: [
-        { termino: 'bien taipá', significado: 'Porción generosa (+100g carne/arroz)', frecuencia: 64 },
-        { termino: 'al toque', significado: 'Ticket urgente despacho cocina', frecuencia: 51 },
-        { termino: 'sin cebollita china', significado: 'Exclusión culinaria de cebollita china', frecuencia: 39 },
-        { termino: 'harto ají', significado: 'Crema de rocoto y ají chifero extra', frecuencia: 43 },
-        { termino: 'con wantán', significado: 'Upsell sugerido / añadido a la orden', frecuencia: 58 },
-        { termino: 'poco sillao', significado: 'Reducción de sal y salsa de soya al wok', frecuencia: 22 }
-      ],
-      efectividad_recomendaciones: [
-        { producto: 'Wantán Frito x6 / x12', sugerencias: 61, aceptadas: 48, porcentaje: 78.6, ingreso_adicional: 1420.00 },
-        { producto: 'Inka Kola / Bebidas Heladas', sugerencias: 88, aceptadas: 56, porcentaje: 63.6, ingreso_adicional: 448.00 },
-        { producto: 'Sopa Wantán Especial', sugerencias: 32, aceptadas: 15, porcentaje: 46.8, ingreso_adicional: 300.00 }
-      ]
-    };
+  /** Marca la sesión de voz con el código del pedido que originó. */
+  vincularPedido(idSesion: number, codigoPedido: string): void {
+    const updated = this.sesiones().map(s =>
+      s.id_sesion === idSesion
+        ? { ...s, pedido_asociado_codigo: codigoPedido, exitosa: true, estado: 'finalizada' as const }
+        : s
+    );
+    this.sesiones.set(updated);
+    this.storage.set(this.SESIONES_KEY, updated);
   }
 }

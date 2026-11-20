@@ -5,9 +5,14 @@
     "ng": "ng",
     "start": "ng serve --port 4200 --host 0.0.0.0",
     "build": "ng build",
-    "watch": "ng build --watch --configuration development"
+    "watch": "ng build --watch --configuration development",
+    "test": "tsc -p tsconfig.spec.json && node --test \"out-tsc/spec/**/*.spec.js\""
   },
   "private": true,
+  "engines": {
+    "node": "^20.11.1 || ^22.0.0",
+    "npm": ">=10"
+  },
   "dependencies": {
     "@angular/animations": "^18.2.0",
     "@angular/common": "^18.2.0",

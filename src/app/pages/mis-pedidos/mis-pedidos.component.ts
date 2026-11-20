@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { PedidosService } from '../../services/pedidos.service';
 import { AuthService } from '../../services/auth.service';
+import { ClientesService } from '../../services/clientes.service';
 import { CartService } from '../../services/cart.service';
 import { NotificationService } from '../../services/notification.service';
 import { Pedido } from '../../models/pedido.model';
@@ -168,11 +169,11 @@ import { Pedido } from '../../models/pedido.model';
                 Resumen de Cuenta
               </h4>
               <div class="flex justify-between text-xs text-on-surface-variant">
-                <span>Subtotal:</span>
+                <span>Op. gravada (sin IGV):</span>
                 <span class="font-semibold text-on-surface">S/ {{ activo.subtotal.toFixed(2) }}</span>
               </div>
               <div class="flex justify-between text-xs text-on-surface-variant">
-                <span>Impuestos (IGV 18%):</span>
+                <span>IGV (18%) incluido:</span>
                 <span class="font-semibold text-on-surface">S/ {{ activo.impuestos.toFixed(2) }}</span>
               </div>
               <div class="flex justify-between text-base font-black text-on-surface pt-2 border-t border-outline-variant/30">
@@ -183,8 +184,60 @@ import { Pedido } from '../../models/pedido.model';
           </div>
         </div>
 
+        <!-- Otros pedidos en curso (además del pedido activo destacado) -->
+        <div *ngIf="otrosActivos().length > 0" class="rounded-2xl border border-outline-variant/40 bg-surface shadow-xs p-4 sm:p-5 space-y-3">
+          <h2 class="font-bold text-sm text-on-surface">Otros pedidos en curso ({{ otrosActivos().length }})</h2>
+          <div
+            *ngFor="let p of otrosActivos()"
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-surface-container-low border border-surface-container text-xs"
+          >
+            <div class="min-w-0">
+              <p class="font-bold text-on-surface">
+                {{ p.codigo }} • {{ p.hora_pedido }}
+                <span class="ml-1 text-[11px] font-semibold text-primary">{{ p.origen === 'voice_ai' ? 'Voice AI Mei' : 'Web' }}</span>
+              </p>
+              <p class="text-on-surface-variant truncate">
+                <span *ngFor="let det of p.detalles; let last = last">{{ det.cantidad }}x {{ det.nombre_producto }}{{ !last ? ', ' : '' }}</span>
+              </p>
+            </div>
+            <div class="flex items-center gap-3 shrink-0">
+              <span class="px-2.5 py-1 rounded-full text-[11px] font-bold"
+                [ngClass]="p.estado === 'pendiente' ? 'bg-amber-100 text-amber-900' : 'bg-blue-100 text-blue-900'">
+                {{ p.estado === 'pendiente' ? '⏳ Recibido' : (p.tiempo_estimado_entrega?.includes('Listo') ? '📦 Listo para despacho' : '🔥 En wok') }}
+              </span>
+              <span class="font-black text-on-surface">S/ {{ p.total.toFixed(2) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sin sesión de comensal -->
+        <div *ngIf="idCliente() === null" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
+          <span class="material-symbols-outlined text-4xl text-outline-variant/60">lock</span>
+          <h3 class="font-headline-md text-base font-bold text-on-surface">
+            {{ auth.isAdmin() ? 'Esta sección es para comensales' : 'Inicia sesión para ver tus pedidos' }}
+          </h3>
+          <p class="text-xs text-on-surface-variant max-w-sm mx-auto">
+            {{ auth.isAdmin() ? 'Gestiona todas las comandas desde el Panel Administrativo.' : 'Ingresa con tu cuenta de cliente para seguir tus órdenes en cocina y revisar tu historial.' }}
+          </p>
+          <a
+            *ngIf="auth.isAdmin()"
+            routerLink="/admin/pedidos"
+            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-bold text-xs hover:bg-surface-tint shadow-xs mt-2"
+          >
+            <span>Ir al Panel Admin</span>
+          </a>
+          <a
+            *ngIf="!auth.isAdmin()"
+            routerLink="/login"
+            [queryParams]="{ returnUrl: '/mis-pedidos' }"
+            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-bold text-xs hover:bg-surface-tint shadow-xs mt-2"
+          >
+            <span>Iniciar Sesión</span>
+          </a>
+        </div>
+
         <!-- No active order banner -->
-        <div *ngIf="!pedidoActivo()" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
+        <div *ngIf="idCliente() !== null && !pedidoActivo()" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
           <span class="material-symbols-outlined text-4xl text-outline-variant/60">receipt</span>
           <h3 class="font-headline-md text-base font-bold text-on-surface">No tienes ningún pedido activo en este momento</h3>
           <p class="text-xs text-on-surface-variant max-w-sm mx-auto">
@@ -199,7 +252,7 @@ import { Pedido } from '../../models/pedido.model';
         </div>
 
         <!-- HISTORIAL DE PEDIDOS -->
-        <div class="space-y-4 pt-4">
+        <div *ngIf="idCliente() !== null" class="space-y-4 pt-4">
           <div class="flex items-center justify-between">
             <h2 class="font-display-lg text-xl font-bold text-on-surface">Historial de Pedidos Anteriores</h2>
             <span class="text-xs text-on-surface-variant font-medium">
@@ -265,11 +318,27 @@ export class MisPedidosComponent {
   private pedidosService = inject(PedidosService);
   private cart = inject(CartService);
   private notification = inject(NotificationService);
+  private clientesService = inject(ClientesService);
+  readonly auth = inject(AuthService);
 
-  readonly pedidos = this.pedidosService.pedidos;
+  /** Id de cliente del comensal autenticado (null si no hay sesión de comensal). */
+  readonly idCliente = computed(() => this.clientesService.idClienteDeUsuario(this.auth.currentUser()));
+
+  /** Solo los pedidos del comensal autenticado. */
+  readonly pedidos = computed(() => {
+    const id = this.idCliente();
+    if (id === null) return [];
+    return this.pedidosService.pedidos().filter(p => p.id_cliente === id);
+  });
 
   readonly pedidoActivo = computed(() => {
     return this.pedidos().find(p => p.estado === 'pendiente' || p.estado === 'en_preparacion') || null;
+  });
+
+  /** Pedidos en curso distintos del destacado como "Pedido Activo". */
+  readonly otrosActivos = computed(() => {
+    const activo = this.pedidoActivo();
+    return this.pedidos().filter(p => (p.estado === 'pendiente' || p.estado === 'en_preparacion') && p !== activo);
   });
 
   readonly pedidosHistorial = computed(() => {

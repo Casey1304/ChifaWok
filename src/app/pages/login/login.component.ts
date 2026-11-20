@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router, ActivatedRoute, RouterModule } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
+import { DEMO_CREDENCIALES, PASSWORD_MIN_LENGTH } from '../../models/auth.model';
+import { returnUrlPermitida } from '../../utils/navegacion.util';
 import { NotificationService } from '../../services/notification.service';
 
 @Component({
@@ -199,25 +201,21 @@ export class LoginComponent {
     private notification: NotificationService
   ) {
     this.loginForm = this.fb.group({
-      email: ['gerencia@chifawok.pe', [Validators.required, Validators.email]],
-      password: ['ChifaSabor2025', [Validators.required, Validators.minLength(4)]],
+      email: [DEMO_CREDENCIALES.ADMIN.email, [Validators.required, Validators.email]],
+      password: [DEMO_CREDENCIALES.ADMIN.password, [Validators.required, Validators.minLength(PASSWORD_MIN_LENGTH)]],
       recordar: [true]
     });
   }
 
   fillDemoAdmin(): void {
-    this.loginForm.patchValue({
-      email: 'gerencia@chifawok.pe',
-      password: 'ChifaSabor2025'
-    });
+    this.loginForm.patchValue({ ...DEMO_CREDENCIALES.ADMIN });
+    this.loginForm.markAsPristine();
     this.notification.info('Datos autocompletados', 'Credenciales de Administrador cargadas.');
   }
 
   fillDemoCliente(): void {
-    this.loginForm.patchValue({
-      email: 'carlos.mendoza@email.pe',
-      password: '123'
-    });
+    this.loginForm.patchValue({ ...DEMO_CREDENCIALES.CLIENTE });
+    this.loginForm.markAsPristine();
     this.notification.info('Datos autocompletados', 'Credenciales de Comensal cargadas.');
   }
 
@@ -229,17 +227,20 @@ export class LoginComponent {
   }
 
   onSubmit(): void {
-    if (this.loginForm.invalid) return;
+    if (this.loginForm.invalid || this.isSubmitting()) return;
 
     this.isSubmitting.set(true);
 
-    setTimeout(() => {
-      const res = this.auth.login(this.loginForm.value);
+    setTimeout(async () => {
+      const res = await this.auth.login(this.loginForm.value);
       this.isSubmitting.set(false);
 
       if (res.success) {
         this.notification.success('Sesión Iniciada', res.message);
-        const returnUrl = this.route.snapshot.queryParams['returnUrl'];
+        const returnUrl = returnUrlPermitida(
+          this.route.snapshot.queryParamMap.get('returnUrl'),
+          res.user?.rol === 'ADMIN'
+        );
         if (returnUrl) {
           this.router.navigateByUrl(returnUrl);
         } else if (res.user?.rol === 'ADMIN') {

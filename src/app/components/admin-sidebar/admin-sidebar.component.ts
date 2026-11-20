@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule, Router } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
@@ -10,7 +10,45 @@ import { MetricasService } from '../../services/metricas.service';
   standalone: true,
   imports: [CommonModule, RouterModule],
   template: `
-    <aside class="w-64 bg-surface border-r border-outline-variant/40 flex flex-col justify-between h-screen shrink-0 select-none">
+    <!-- Barra superior solo en tablet/móvil: abre el menú lateral -->
+    <div class="lg:hidden h-14 shrink-0 px-4 flex items-center justify-between bg-surface border-b border-outline-variant/40">
+      <div class="flex items-center gap-2.5">
+        <button
+          type="button"
+          (click)="menuAbierto.set(true)"
+          aria-label="Abrir menú del panel"
+          [attr.aria-expanded]="menuAbierto()"
+          class="p-2 -ml-2 rounded-lg text-on-surface hover:bg-surface-container"
+        >
+          <span class="material-symbols-outlined">menu</span>
+        </button>
+        <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-secondary-fixed shadow-xs">
+          <span class="material-symbols-outlined text-lg" style="font-variation-settings: 'FILL' 1;">restaurant</span>
+        </div>
+        <span class="font-headline-md text-sm font-bold text-primary">Chifa Wok · Admin</span>
+      </div>
+      <button
+        type="button"
+        (click)="auth.logout()"
+        class="text-xs text-red-600 hover:text-red-800 flex items-center gap-1 font-semibold"
+      >
+        <span class="material-symbols-outlined text-sm">logout</span>
+        Salir
+      </button>
+    </div>
+
+    <!-- Fondo oscuro del menú desplegable -->
+    <div
+      *ngIf="menuAbierto()"
+      (click)="menuAbierto.set(false)"
+      class="lg:hidden fixed inset-0 z-40 bg-black/40"
+    ></div>
+
+    <aside
+      (click)="cerrarAlNavegar($event)"
+      class="w-64 bg-surface border-r border-outline-variant/40 flex flex-col justify-between h-screen shrink-0 select-none fixed inset-y-0 left-0 z-50 transition-transform duration-200 lg:static lg:translate-x-0 overflow-y-auto"
+      [ngClass]="menuAbierto() ? 'translate-x-0 shadow-2xl' : '-translate-x-full'"
+    >
       <div class="flex flex-col">
         
         <!-- Logo Header -->
@@ -96,10 +134,10 @@ import { MetricasService } from '../../services/metricas.service';
             </span>
           </div>
           <div class="text-xs text-on-surface-variant">
-            Precisión Fonética Wok: <strong class="text-primary font-bold">98.4%</strong>
+            Precisión del reconocimiento: <strong class="text-primary font-bold">{{ metricasService.precisionPromedio() }}%</strong>
           </div>
           <div class="w-full bg-surface-container h-1.5 rounded-full overflow-hidden">
-            <div class="bg-primary h-full rounded-full w-[98.4%]"></div>
+            <div class="bg-primary h-full rounded-full" [style.width]="metricasService.precisionPromedio() + '%'"></div>
           </div>
         </div>
 
@@ -126,6 +164,16 @@ import { MetricasService } from '../../services/metricas.service';
   `
 })
 export class AdminSidebarComponent {
+  /** Menú lateral desplegado (solo aplica bajo el breakpoint lg). */
+  readonly menuAbierto = signal<boolean>(false);
+
+  /** Cierra el menú móvil al pulsar un enlace de navegación. */
+  cerrarAlNavegar(event: Event): void {
+    if ((event.target as HTMLElement).closest('a')) {
+      this.menuAbierto.set(false);
+    }
+  }
+
   constructor(
     public auth: AuthService,
     public pedidosService: PedidosService,

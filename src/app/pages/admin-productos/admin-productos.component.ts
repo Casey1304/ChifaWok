@@ -5,19 +5,20 @@ import { AdminSidebarComponent } from '../../components/admin-sidebar/admin-side
 import { ProductosService } from '../../services/productos.service';
 import { NotificationService } from '../../services/notification.service';
 import { Producto } from '../../models/producto.model';
+import { coincideBusqueda } from '../../utils/texto.util';
 
 @Component({
   selector: 'app-admin-productos',
   standalone: true,
   imports: [CommonModule, FormsModule, ReactiveFormsModule, AdminSidebarComponent],
   template: `
-    <div class="flex h-screen overflow-hidden bg-background">
+    <div class="flex flex-col lg:flex-row h-screen overflow-hidden bg-background">
       <app-admin-sidebar></app-admin-sidebar>
 
-      <main class="flex-1 flex flex-col h-screen overflow-y-auto bg-background custom-scroll">
+      <main class="flex-1 min-h-0 min-w-0 flex flex-col lg:h-screen overflow-y-auto bg-background custom-scroll">
         
         <!-- Header -->
-        <header class="bg-surface border-b border-outline-variant/30 px-8 py-5 sticky top-0 z-20 shadow-xs">
+        <header class="bg-surface border-b border-outline-variant/30 px-4 sm:px-8 py-4 sm:py-5 sticky top-0 z-20 shadow-xs">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span class="text-xs font-bold uppercase tracking-wider text-primary">Gestión de Catálogo al Wok</span>
@@ -38,7 +39,7 @@ import { Producto } from '../../models/producto.model';
           </div>
         </header>
 
-        <div class="p-8 space-y-6 max-w-[1440px] w-full">
+        <div class="p-4 sm:p-8 space-y-6 max-w-[1440px] w-full">
           
           <!-- KPI Stats Bar (Matches Stitch screen) -->
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -115,10 +116,21 @@ import { Producto } from '../../models/producto.model';
                 <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-base">search</span>
                 <input
                   type="text"
-                  [(ngModel)]="search"
+                  [ngModel]="search()"
+                  (ngModelChange)="search.set($event)"
                   placeholder="Buscar plato, insumo o comando de voz..."
-                  class="w-full pl-9 pr-4 py-2 rounded-xl border border-outline-variant/60 focus:border-primary focus:outline-hidden text-xs bg-surface"
+                  aria-label="Buscar productos"
+                  class="w-full pl-9 pr-9 py-2 rounded-xl border border-outline-variant/60 focus:border-primary focus:outline-hidden text-xs bg-surface"
                 />
+                <button
+                  *ngIf="search()"
+                  type="button"
+                  (click)="search.set('')"
+                  aria-label="Limpiar búsqueda"
+                  class="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
+                >
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
               </div>
 
             </div>
@@ -203,6 +215,11 @@ import { Producto } from '../../models/producto.model';
                       </div>
                     </td>
 
+                  </tr>
+                  <tr *ngIf="productosFiltrados().length === 0">
+                    <td colspan="6" class="py-10 px-3 text-center text-xs text-on-surface-variant italic">
+                      No se encontraron platos con los filtros aplicados.
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -364,7 +381,7 @@ import { Producto } from '../../models/producto.model';
   `
 })
 export class AdminProductosComponent {
-  search = '';
+  readonly search = signal<string>('');
   readonly filtroCategoria = signal<number | null>(null);
 
   showModal = false;
@@ -379,13 +396,15 @@ export class AdminProductosComponent {
       list = list.filter(p => p.id_categoria === catId);
     }
 
-    const term = this.search.trim().toLowerCase();
-    if (term) {
-      list = list.filter(p =>
-        p.nombre.toLowerCase().includes(term) ||
-        p.categoria_nombre.toLowerCase().includes(term) ||
-        (p.sinonimos_voz || []).some(s => s.toLowerCase().includes(term))
-      );
+    const term = this.search();
+    if (term.trim()) {
+      list = list.filter(p => coincideBusqueda(term, [
+        p.nombre,
+        p.categoria_nombre,
+        p.descripcion,
+        p.porciones,
+        ...(p.sinonimos_voz || [])
+      ]));
     }
 
     return list;

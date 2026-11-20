@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { CartService } from '../../services/cart.service';
 import { PedidosService } from '../../services/pedidos.service';
 import { AuthService } from '../../services/auth.service';
+import { ClientesService } from '../../services/clientes.service';
 import { NotificationService } from '../../services/notification.service';
 import { TipoEntrega } from '../../models/pedido.model';
 
@@ -167,11 +168,11 @@ import { TipoEntrega } from '../../models/pedido.model';
           <div *ngIf="cart.items().length > 0" class="p-5 border-t border-surface-container bg-surface-container-low/50 space-y-3">
             <div class="space-y-1.5 text-xs text-on-surface-variant">
               <div class="flex justify-between">
-                <span>Subtotal platos:</span>
+                <span>Op. gravada (sin IGV):</span>
                 <span class="font-semibold text-on-surface">S/ {{ cart.subtotal().toFixed(2) }}</span>
               </div>
               <div class="flex justify-between">
-                <span>IGV (18%):</span>
+                <span>IGV (18%) incluido:</span>
                 <span class="font-semibold text-on-surface">S/ {{ cart.impuestos().toFixed(2) }}</span>
               </div>
               <div class="flex justify-between text-base font-black text-on-surface pt-2 border-t border-outline-variant/30">
@@ -209,21 +210,34 @@ export class CartDrawerComponent {
     public cart: CartService,
     private pedidosService: PedidosService,
     private auth: AuthService,
+    private clientesService: ClientesService,
     private notification: NotificationService,
     private router: Router
   ) {}
 
   checkout(): void {
-    if (this.cart.items().length === 0) return;
+    if (this.cart.items().length === 0 || this.isSubmitting()) return;
+
+    const user = this.auth.currentUser();
+    const idCliente = this.clientesService.idClienteDeUsuario(user);
+    if (!user || idCliente === null) {
+      // Los pedidos pertenecen a un comensal: sin sesión de cliente no se puede asignar el pedido.
+      this.notification.warning(
+        'Inicia sesión como comensal',
+        'Tu carrito se conserva. Ingresa con tu cuenta de cliente para confirmar el pedido.'
+      );
+      this.closeDrawer.emit();
+      this.router.navigate(['/login'], { queryParams: { returnUrl: this.router.url } });
+      return;
+    }
 
     this.isSubmitting.set(true);
-    const user = this.auth.currentUser();
 
     setTimeout(() => {
       const pedido = this.pedidosService.crearPedido({
-        idCliente: user?.id || 1,
-        clienteNombre: user ? `${user.nombre} ${user.apellido}` : 'Carlos Mendoza (Demo)',
-        clienteTelefono: user?.telefono || '+51 987 654 321',
+        idCliente,
+        clienteNombre: `${user.nombre} ${user.apellido}`,
+        clienteTelefono: user.telefono || '',
         clienteDireccion: this.tipoEntrega() === 'delivery' ? this.direccionEntrega : undefined,
         tipoEntrega: this.tipoEntrega(),
         mesa: this.tipoEntrega() === 'salon' ? this.numeroMesa : undefined,

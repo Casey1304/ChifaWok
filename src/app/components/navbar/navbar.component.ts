@@ -15,8 +15,8 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
       <div class="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
         
         <!-- Brand Logo -->
-        <a routerLink="/" class="flex items-center gap-3 group">
-          <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-secondary-fixed shadow-md group-hover:scale-105 transition-transform">
+        <a routerLink="/" class="flex items-center gap-2 sm:gap-3 group">
+          <div class="w-10 h-10 shrink-0 rounded-full bg-primary flex items-center justify-center text-secondary-fixed shadow-md group-hover:scale-105 transition-transform">
             <span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">restaurant</span>
           </div>
           <div class="flex flex-col">
@@ -64,7 +64,7 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
         </div>
 
         <!-- Trailing Actions -->
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 sm:gap-3 shrink-0">
           
           <!-- Voice AI Button -->
           <button
@@ -97,6 +97,8 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
             <div class="relative">
               <button
                 (click)="isUserMenuOpen.set(!isUserMenuOpen())"
+                [attr.aria-expanded]="isUserMenuOpen()"
+                aria-label="Menú de usuario"
                 class="flex items-center gap-2 p-1.5 rounded-full hover:bg-surface-container transition-colors"
               >
                 <div class="w-8 h-8 rounded-full bg-secondary-container text-on-secondary-container font-black flex items-center justify-center text-xs shadow-xs">
@@ -105,7 +107,7 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
                 <span class="hidden lg:inline text-xs font-bold text-on-surface">
                   {{ auth.currentUser()?.nombre }}
                 </span>
-                <span class="material-symbols-outlined text-sm text-on-surface-variant">expand_more</span>
+                <span class="hidden sm:inline-flex"><span class="material-symbols-outlined text-sm text-on-surface-variant">expand_more</span></span>
               </button>
 
               <!-- Dropdown Menu -->
@@ -165,6 +167,8 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
           <!-- Mobile Hamburger Menu Button -->
           <button
             (click)="isMobileMenuOpen.set(!isMobileMenuOpen())"
+            [attr.aria-expanded]="isMobileMenuOpen()"
+            aria-label="Abrir menú de navegación"
             class="md:hidden p-2 rounded-lg text-on-surface hover:bg-surface-container"
           >
             <span class="material-symbols-outlined">{{ isMobileMenuOpen() ? 'close' : 'menu' }}</span>
@@ -176,6 +180,8 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
       <div *ngIf="isMobileMenuOpen()" class="md:hidden border-t border-surface-container bg-surface px-4 py-4 space-y-3">
         <a
           routerLink="/"
+          routerLinkActive="!text-primary font-bold"
+          [routerLinkActiveOptions]="{ exact: true }"
           (click)="isMobileMenuOpen.set(false)"
           class="block py-2 text-sm font-semibold text-on-surface hover:text-primary"
         >
@@ -183,6 +189,7 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
         </a>
         <a
           routerLink="/carta"
+          routerLinkActive="!text-primary font-bold"
           (click)="isMobileMenuOpen.set(false)"
           class="block py-2 text-sm font-semibold text-on-surface hover:text-primary"
         >
@@ -190,6 +197,7 @@ import { CartDrawerComponent } from '../cart-drawer/cart-drawer.component';
         </a>
         <a
           routerLink="/mis-pedidos"
+          routerLinkActive="!text-primary font-bold"
           (click)="isMobileMenuOpen.set(false)"
           class="block py-2 text-sm font-semibold text-on-surface hover:text-primary"
         >

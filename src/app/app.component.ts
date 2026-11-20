@@ -35,12 +35,16 @@ import { DemoBadgeComponent } from './components/demo-badge/demo-badge.component
       <app-toast></app-toast>
 
       <!-- Global Demo Mode Controls Badge -->
-      <app-demo-badge></app-demo-badge>
+      <app-demo-badge [enAdmin]="isAdminRoute()"></app-demo-badge>
     </div>
   `
 })
 export class AppComponent {
-  private currentUrl = signal('');
+  // Se inicializa con la ruta real del navegador para evitar que el navbar del cliente
+  // parpadee en /login o /admin antes del primer NavigationEnd (p. ej. al recargar).
+  private currentUrl = signal(typeof window !== 'undefined' ? window.location.pathname : '');
+
+  readonly isAdminRoute = computed(() => this.currentUrl().startsWith('/admin'));
 
   readonly showClientNavbar = computed(() => {
     const url = this.currentUrl();
@@ -51,8 +55,8 @@ export class AppComponent {
 
   constructor(private router: Router) {
     this.router.events
-      .pipe(filter(event => event instanceof NavigationEnd))
-      .subscribe((event: any) => {
+      .pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
+      .subscribe(event => {
         this.currentUrl.set(event.urlAfterRedirects || event.url);
       });
   }
