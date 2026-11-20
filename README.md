@@ -171,12 +171,21 @@ También puedes crear una cuenta de comensal en **/registro**. Su contraseña se
 
 **Cómo interpreta Mei**
 
-Mei usa reglas locales en `src/app/utils/interprete-pedido.util.ts` (no usa un modelo de lenguaje):
+Mei usa reglas locales en `src/app/utils/interprete-pedido.util.ts`, sin modelo de lenguaje ni servicios externos. La fuente de verdad es la carta real, con los nombres y los **sinónimos de voz** de cada plato, que se editan en Gestión de Productos.
 
-- Reconoce cantidades en números o palabras («dos», «3», «par», «media docena»), plurales y variantes de transcripción («inca cola», «won ton»).
-- Usa los nombres y los **sinónimos de voz** de cada plato, que se editan en Gestión de Productos.
-- **No inventa platos.** Ante «tres chaufas de pollo» responde que no está en la carta. Ante «pollo», que tiene varias opciones, pregunta cuál. Si el plato está pausado, avisa que no está disponible.
-- Si el micrófono está bloqueado, no hay voz o no hay conexión, muestra el motivo y permite escribir el pedido.
+1. **Coincidencia exacta.** Normaliza tildes, mayúsculas, plurales y alias de transcripción («inca colas», «won ton», «tipa kai»). Los platos así reconocidos se agregan directamente con su cantidad («dos», «3», «par», «media docena»).
+2. **Búsqueda aproximada.** Lo que no coincide exactamente se compara con una *clave fonética*: une las palabras y aplica equivalencias del español, como c/qu/k, z/s, ll/y, h muda y letras dobles. Luego mide la similitud con la distancia de Levenshtein. Así, «pollo tip packay» se acerca a «Pollo Tipa Kay».
+3. **Niveles de confianza** (calibrados con la carta real en las pruebas):
+   - **Alta (≥ 0,80 y ventaja ≥ 0,12 sobre la segunda opción):** Mei pregunta «¿Te refieres a…?» y el plato se agrega solo si el comensal lo elige. La máxima similitud medida entre dos platos distintos de la carta es 0,74.
+   - **Media (0,60–0,80) o palabra genérica** («quiero un pollo», «dos chaufas»): muestra hasta 4 opciones de la carta.
+   - **Baja (< 0,60):** no sugiere nada y pide repetir o escribir el plato.
+4. **Nunca inventa platos.** Ante «tres chaufas de pollo» o «lomo saltado» informa que no están en la carta y ofrece platos parecidos. Los platos pausados no se sugieren.
+
+**Selector de sugerencias.** Las dudas aparecen como tarjetas seleccionables dentro de la conversación, con la opción «Ninguno de estos». Al elegir una, el plato pasa al resumen con la cantidad que se entendió. Los demás platos de la frase se conservan.
+
+En el resumen se pueden cambiar cantidades, eliminar platos o seguir hablando para agregar más. **Confirmar Pedido** solo se habilita cuando no quedan dudas, y registra el pedido una sola vez. Mei muestra «Pedido registrado», con accesos a «Ver Mis Pedidos» y a «Hacer otro pedido».
+
+Si el micrófono está bloqueado, no hay voz o no hay conexión, Mei muestra el motivo y permite escribir el pedido.
 
 **Requisitos:** Chrome o Edge, permiso de micrófono, conexión a Internet y abrir la app en `localhost` o `https`.
 
@@ -261,7 +270,7 @@ Consecuencias: los datos viven **solo en ese navegador y equipo**, no se compart
 - Inicio y cierre de sesión repetidos con ambos roles, «Recordarme», restauración de sesión y protección de rutas por rol.
 - Carta con búsqueda sin tildes, filtros combinables y barra de categorías con desplazamiento horizontal.
 - Carrito, totales con IGV incluido, pedidos asociados al comensal, «Mis Pedidos» y gestión completa en el KDS.
-- Mei: interpretación contra la carta, confirmación sin duplicados, manejo de errores de micrófono y enlace sesión→pedido. Verificado con transcripciones inyectadas en los manejadores del reconocimiento de voz y con texto.
+- Mei: interpretación exacta y aproximada contra la carta, selector de sugerencias, corrección de cantidades, confirmación sin duplicados, segundo pedido sin recargar y enlace sesión→pedido. Verificado con transcripciones inyectadas en los manejadores del reconocimiento de voz y con texto. La captura con micrófono físico la validó el equipo en Chrome.
 - CRUD de productos, búsqueda y exportación de clientes, métricas calculadas y panel adaptado a escritorio, tablet y móvil.
 
 ### Limitaciones conocidas
@@ -270,7 +279,7 @@ Consecuencias: los datos viven **solo en ese navegador y equipo**, no se compart
 |---|---|
 | Backend y base de datos | No implementados. Todo es local al navegador; no es una base multiusuario. |
 | Seguridad | Autenticación demostrativa en el cliente: los tokens son simulados y quien controla el navegador puede leer o alterar los datos locales. El hash de contraseñas y la validación de rol al restaurar la sesión mitigan abusos simples, pero **no equivalen** a la seguridad de un servidor. |
-| Mei | Interpretación por reglas locales, sin LLM. La captura con micrófono físico depende de Chrome/Edge e Internet y debe validarse en el equipo de la exposición. |
+| Mei | Interpretación por reglas locales y similitud fonética, sin LLM: comprende pedidos de la carta, no conversación libre. Los umbrales están calibrados para la carta actual; si se agregan platos con nombres muy parecidos, conviene repetir la calibración (`npm test`). La captura de voz depende de Chrome/Edge e Internet. |
 | Dependencias | `npm audit` reporta vulnerabilidades en Angular ≤ 19.2.25 (8 en dependencias de producción) y en herramientas de compilación. La app no usa las funciones afectadas (i18n, SSR, `HttpClient`, `formatDate`, SVG o HTML dinámico). La corrección requiere migrar Angular a una versión mayor (tarea pendiente). |
 | Datos de ejemplo | Los pedidos semilla conservan importes históricos fijos; los pedidos nuevos usan el cálculo con IGV incluido. |
 | Notificaciones | El cupón del CRM genera un código; no hay envío real por SMS ni WhatsApp. |
