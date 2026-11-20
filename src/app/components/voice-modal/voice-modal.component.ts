@@ -1,8 +1,8 @@
-import { Component } from '@angular/core';
+import { Component, ElementRef, ViewChild, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { VoiceAiService } from '../../services/voice-ai.service';
+import { DudaVista, InterpretedItem, VoiceAiService } from '../../services/voice-ai.service';
 import { PedidosService } from '../../services/pedidos.service';
 import { CartService } from '../../services/cart.service';
 import { AuthService } from '../../services/auth.service';
@@ -57,7 +57,7 @@ import { NotificationService } from '../../services/notification.service';
                     'bg-blue-100 text-blue-800': voice.voiceState() === 'speaking',
                     'bg-amber-100 text-amber-800': voice.voiceState() === 'processing',
                     'bg-surface-container text-on-surface-variant': voice.voiceState() === 'idle',
-                    'bg-emerald-100 text-emerald-800': voice.voiceState() === 'ready_to_confirm',
+                    'bg-emerald-100 text-emerald-800': voice.voiceState() === 'ready_to_confirm' || voice.voiceState() === 'identified' || voice.voiceState() === 'registered',
                     'bg-amber-100 text-amber-900': voice.voiceState() === 'clarification',
                     'bg-red-100 text-red-800': voice.voiceState() === 'error'
                   }"
@@ -66,8 +66,10 @@ import { NotificationService } from '../../services/notification.service';
                     voice.voiceState() === 'listening' ? '🎙️ Escuchando...' :
                     voice.voiceState() === 'speaking' ? '🔊 Hablando...' :
                     voice.voiceState() === 'processing' ? '⚡ Interpretando...' :
-                    voice.voiceState() === 'ready_to_confirm' ? '✓ Pedido Listo' :
-                    voice.voiceState() === 'clarification' ? '❓ Aclaración' :
+                    voice.voiceState() === 'ready_to_confirm' ? '✓ Listo para confirmar' :
+                    voice.voiceState() === 'identified' ? '✓ Producto identificado' :
+                    voice.voiceState() === 'registered' ? '✅ Pedido registrado' :
+                    voice.voiceState() === 'clarification' ? '❓ Necesita aclaración' :
                     voice.voiceState() === 'error' ? '⚠️ Aviso' : 'En línea (es-PE)'
                   }}
                 </span>
@@ -87,7 +89,7 @@ import { NotificationService } from '../../services/notification.service';
         </div>
 
         <!-- Transcript & Chat Area -->
-        <div class="p-4 sm:p-6 flex-1 overflow-y-auto space-y-4 custom-scroll max-h-[50vh]">
+        <div #chat class="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto space-y-4 custom-scroll">
           
           <!-- Mei Welcome / Active Message -->
           <div class="flex flex-col items-start gap-1">
@@ -149,37 +151,161 @@ import { NotificationService } from '../../services/notification.service';
             </div>
           </div>
 
+          <!-- Sugerencias de Mei: platos dudosos, genéricos o fuera de carta -->
+          <div
+            *ngFor="let duda of voice.dudas(); trackBy: trackDuda"
+            class="p-4 rounded-2xl border border-outline-variant/50 bg-surface-container-low shadow-xs space-y-3"
+            role="group"
+            [attr.aria-label]="'Opciones para ' + duda.texto"
+          >
+            <div class="flex items-start gap-2">
+              <span class="material-symbols-outlined text-tertiary text-lg shrink-0" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+              <div class="space-y-0.5">
+                <p class="font-bold text-sm text-on-surface">
+                  {{
+                    duda.tipo === 'probable' ? '¿Te refieres a ' + duda.opciones[0].producto.nombre + '?' :
+                    duda.tipo === 'no_existe' ? 'No tenemos «' + duda.texto + '» en la carta' :
+                    'Encontré estos platos parecidos. ¿Cuál de ellos deseas?'
+                  }}
+                </p>
+                <p class="text-[11px] text-on-surface-variant">
+                  Escuché «{{ duda.texto }}» · Cantidad: <strong>{{ duda.cantidad }}</strong>
+                  <span *ngIf="duda.tipo === 'no_existe' && duda.opciones.length"> · Platos de la carta parecidos:</span>
+                </p>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <button
+                type="button"
+                *ngFor="let op of duda.opciones; let primera = first"
+                (click)="voice.elegirSugerencia(duda.id, op.producto.id_producto)"
+                class="w-full px-4 py-3 rounded-xl border bg-surface hover:border-primary hover:bg-primary/5 transition-colors flex items-center gap-3 text-left group"
+                [ngClass]="duda.tipo === 'probable' && primera ? 'border-primary/60' : 'border-outline-variant/60'"
+              >
+                <span class="w-4 h-4 rounded-full border-2 border-outline-variant group-hover:border-primary group-hover:bg-primary shrink-0 transition-colors"></span>
+                <span class="flex-1 min-w-0">
+                  <span class="block font-bold text-sm text-on-surface truncate">{{ op.producto.nombre }}</span>
+                  <span class="block text-[11px] text-on-surface-variant">
+                    S/ {{ op.producto.precio.toFixed(2) }} · {{ op.producto.categoria_nombre }}
+                  </span>
+                </span>
+                <span
+                  *ngIf="duda.tipo === 'probable' && primera"
+                  class="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-black shrink-0"
+                >
+                  Sí, ese plato
+                </span>
+              </button>
+
+              <button
+                type="button"
+                (click)="voice.descartarDuda(duda.id)"
+                class="w-full px-4 py-3 rounded-xl border border-outline-variant/60 bg-surface hover:bg-surface-container transition-colors flex items-center gap-3 text-left"
+              >
+                <span class="w-4 h-4 rounded-full border-2 border-outline-variant shrink-0"></span>
+                <span class="font-bold text-sm text-on-surface-variant">Ninguno de estos</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Pedido registrado -->
+          <div
+            *ngIf="voice.voiceState() === 'registered' && voice.pedidoRegistrado() as registrado"
+            class="p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50 space-y-3"
+          >
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-emerald-700 text-2xl" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+              <div>
+                <p class="font-bold text-sm text-emerald-900">Pedido {{ registrado.codigo }} registrado</p>
+                <p class="text-[11px] text-emerald-800">Total S/ {{ registrado.total.toFixed(2) }} · En la cola del wok</p>
+              </div>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                (click)="verMisPedidos()"
+                class="flex-1 px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 transition-colors"
+              >
+                Ver Mis Pedidos
+              </button>
+              <button
+                type="button"
+                (click)="nuevoPedido()"
+                class="flex-1 px-4 py-2.5 rounded-xl border border-emerald-300 text-emerald-900 text-xs font-bold hover:bg-emerald-100 transition-colors"
+              >
+                Hacer otro pedido
+              </button>
+            </div>
+          </div>
+
           <!-- Interpreted Order Summary Card -->
           <div
             *ngIf="voice.interpretedOrder() as order"
+            [hidden]="order.items.length === 0"
             class="p-4 rounded-xl border-2 border-primary/30 bg-surface-container-low space-y-3"
           >
-            <div class="flex items-center justify-between border-b border-outline-variant/30 pb-2">
+            <div class="flex items-center justify-between gap-2 border-b border-outline-variant/30 pb-2">
               <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary text-xl">fact_check</span>
-                <span class="font-bold text-sm text-on-surface">Resumen Interpretado por Mei</span>
+                <span class="font-bold text-sm text-on-surface">Tu pedido con Mei</span>
               </div>
-              <span
-                class="px-2 py-0.5 rounded-full font-black text-[11px]"
-                [ngClass]="order.avisos.length === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
-              >
-                {{ order.avisos.length === 0 ? 'Validado con la Carta' : 'Requiere revisión' }}
-              </span>
+              <div class="flex items-center gap-2">
+                <span
+                  class="px-2 py-0.5 rounded-full font-black text-[11px]"
+                  [ngClass]="voice.dudas().length === 0 && order.items.length > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'"
+                >
+                  {{ voice.dudas().length > 0 ? 'Falta elegir' : (order.items.length > 0 ? 'Validado con la Carta' : 'Sin platos') }}
+                </span>
+                <button
+                  type="button"
+                  *ngIf="order.items.length > 0"
+                  (click)="voice.vaciarPedido()"
+                  class="text-[11px] font-bold text-on-surface-variant hover:text-red-700"
+                >
+                  Vaciar
+                </button>
+              </div>
             </div>
 
-            <!-- Items List -->
+            <!-- Items: cantidades editables y eliminación -->
+            <p *ngIf="order.items.length === 0" class="text-xs text-on-surface-variant italic">
+              Aún no hay platos confirmados.
+            </p>
             <div class="space-y-1.5">
               <div
-                *ngFor="let item of order.items"
-                class="flex items-center justify-between text-xs py-1 border-b border-surface-container/60"
+                *ngFor="let item of order.items; trackBy: trackItem"
+                class="flex items-center justify-between gap-2 text-xs py-1 border-b border-surface-container/60"
               >
-                <div class="flex items-center gap-2">
-                  <span class="w-5 h-5 rounded-full bg-primary/10 text-primary font-black flex items-center justify-center text-[10px]">
-                    {{ item.cantidad }}
-                  </span>
-                  <span class="font-semibold text-on-surface">{{ item.producto.nombre }}</span>
+                <div class="flex items-center gap-2 min-w-0">
+                  <div class="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      (click)="voice.cambiarCantidad(item.producto.id_producto, -1)"
+                      [attr.aria-label]="'Quitar una unidad de ' + item.producto.nombre"
+                      class="w-6 h-6 rounded-full border border-outline-variant text-on-surface hover:bg-surface-container font-bold"
+                    >-</button>
+                    <span class="w-6 text-center font-black text-primary">{{ item.cantidad }}</span>
+                    <button
+                      type="button"
+                      (click)="voice.cambiarCantidad(item.producto.id_producto, 1)"
+                      [attr.aria-label]="'Agregar una unidad de ' + item.producto.nombre"
+                      class="w-6 h-6 rounded-full border border-outline-variant text-on-surface hover:bg-surface-container font-bold"
+                    >+</button>
+                  </div>
+                  <span class="font-semibold text-on-surface truncate">{{ item.producto.nombre }}</span>
                 </div>
-                <span class="font-bold text-on-surface">S/ {{ item.subtotal.toFixed(2) }}</span>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span class="font-bold text-on-surface">S/ {{ item.subtotal.toFixed(2) }}</span>
+                  <button
+                    type="button"
+                    (click)="voice.quitarItem(item.producto.id_producto)"
+                    [attr.aria-label]="'Eliminar ' + item.producto.nombre"
+                    class="p-1 rounded-full text-on-surface-variant hover:text-red-700 hover:bg-red-50"
+                  >
+                    <span class="material-symbols-outlined text-sm">delete</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -224,7 +350,7 @@ import { NotificationService } from '../../services/notification.service';
         </div>
 
         <!-- Controls & Text Fallback Input -->
-        <div class="p-4 border-t border-surface-variant/40 bg-surface-container-low/70 space-y-3">
+        <div class="p-4 border-t border-surface-variant/40 bg-surface-container-low/70 space-y-3 shrink-0">
           
           <!-- Text input fallback -->
           <form (ngSubmit)="sendManualText()" class="flex items-center gap-2">
@@ -245,7 +371,11 @@ import { NotificationService } from '../../services/notification.service';
             </button>
           </form>
 
-          <p *ngIf="voice.interpretedOrder() && !esComensal()" class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <p *ngIf="voice.dudas().length > 0" class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Elige un plato de las opciones o pulsa «Ninguno de estos». También puedes hablar o escribir de nuevo.
+          </p>
+
+          <p *ngIf="voice.interpretedOrder()?.items?.length && !esComensal()" class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             Para registrar el pedido debes iniciar sesión como comensal. Al confirmar, los platos se guardarán en tu carrito.
           </p>
 
@@ -278,9 +408,9 @@ import { NotificationService } from '../../services/notification.service';
 
               <button
                 type="button"
-                *ngIf="voice.interpretedOrder()"
+                *ngIf="voice.interpretedOrder()?.items?.length"
                 (click)="confirmOrder()"
-                [disabled]="confirmando || voice.isListening()"
+                [disabled]="confirmando || voice.isListening() || voice.dudas().length > 0 || !voice.interpretedOrder()!.items.length"
                 class="flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-primary text-on-primary text-xs font-bold hover:bg-surface-tint shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <span>Confirmar Pedido</span>
@@ -299,6 +429,8 @@ export class VoiceModalComponent {
   /** Evita registrar dos veces el mismo pedido por clics repetidos. */
   confirmando = false;
 
+  @ViewChild('chat') private chat?: ElementRef<HTMLElement>;
+
   constructor(
     public voice: VoiceAiService,
     private pedidosService: PedidosService,
@@ -307,7 +439,21 @@ export class VoiceModalComponent {
     private clientesService: ClientesService,
     private notification: NotificationService,
     private router: Router
-  ) {}
+  ) {
+    // Al aparecer sugerencias o cambiar el pedido, se muestran sin que el comensal tenga que desplazarse.
+    effect(() => {
+      const hayDudas = this.voice.dudas().length > 0;
+      this.voice.interpretedOrder();
+      this.voice.voiceState();
+      setTimeout(() => {
+        const contenedor = this.chat?.nativeElement;
+        if (!contenedor) return;
+        const objetivo = hayDudas ? contenedor.querySelector('[role="group"]') : null;
+        if (objetivo) objetivo.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        else contenedor.scrollTo({ top: contenedor.scrollHeight, behavior: 'smooth' });
+      });
+    });
+  }
 
   toggleListening(): void {
     if (this.voice.isListening()) {
@@ -329,7 +475,7 @@ export class VoiceModalComponent {
 
   confirmOrder(): void {
     const order = this.voice.interpretedOrder();
-    if (!order || this.confirmando || this.voice.isListening()) return;
+    if (!order || order.items.length === 0 || this.voice.dudas().length > 0 || this.confirmando || this.voice.isListening()) return;
 
     const user = this.auth.currentUser();
     const idCliente = this.clientesService.idClienteDeUsuario(user);
@@ -368,15 +514,32 @@ export class VoiceModalComponent {
       origen: 'voice_ai'
     });
 
-    this.voice.vincularPedido(nuevo.codigo);
-    this.voice.closeModal();
+    // Mei muestra el estado "Pedido registrado" y enlaza las sesiones de voz al pedido.
+    this.voice.marcarRegistrado(nuevo.codigo, nuevo.total);
     this.confirmando = false;
 
     this.notification.success(
       '¡Pedido por Voz Registrado!',
       `Mei envió tu orden ${nuevo.codigo} directo al Wok. Total: S/ ${nuevo.total.toFixed(2)}.`
     );
+  }
 
+  verMisPedidos(): void {
+    this.voice.closeModal();
     this.router.navigate(['/mis-pedidos']);
+  }
+
+  /** Segundo pedido sin recargar: limpia la conversación y deja a Mei lista. */
+  nuevoPedido(): void {
+    this.voice.resetState();
+    this.voice.meiResponse.set('¿Qué más te preparo? Puedes hablar o escribir tu pedido.');
+  }
+
+  trackDuda(_: number, duda: DudaVista): number {
+    return duda.id;
+  }
+
+  trackItem(_: number, item: InterpretedItem): number {
+    return item.producto.id_producto;
   }
 }
