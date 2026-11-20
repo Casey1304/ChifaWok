@@ -1,6 +1,7 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { StorageService } from './storage.service';
 import { Cliente } from '../models/cliente.model';
+import { Usuario } from '../models/auth.model';
 
 @Injectable({
   providedIn: 'root'
@@ -40,6 +41,18 @@ export class ClientesService {
 
   getClienteById(id: number): Cliente | undefined {
     return this.clientes().find(c => c.id_cliente === id);
+  }
+
+  /**
+   * Devuelve el id de cliente (directorio de clientes) asociado a un usuario comensal.
+   * Se vincula por correo; si el comensal no figura en el directorio se usa su id de usuario.
+   * Retorna null cuando no hay sesión o el usuario no es comensal (p. ej. el administrador).
+   */
+  idClienteDeUsuario(usuario: Usuario | null): number | null {
+    if (!usuario || usuario.rol !== 'CLIENTE') return null;
+    const email = usuario.email.trim().toLowerCase();
+    const cliente = this.clientes().find(c => (c.email || '').toLowerCase() === email);
+    return cliente ? cliente.id_cliente : usuario.id;
   }
 
   crearCliente(datos: Omit<Cliente, 'id_cliente' | 'puntos_dragon' | 'pedidos_totales' | 'gasto_total' | 'ultimo_pedido'>): Cliente {

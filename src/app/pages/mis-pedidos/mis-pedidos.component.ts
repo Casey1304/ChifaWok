@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { PedidosService } from '../../services/pedidos.service';
 import { AuthService } from '../../services/auth.service';
+import { ClientesService } from '../../services/clientes.service';
 import { CartService } from '../../services/cart.service';
 import { NotificationService } from '../../services/notification.service';
 import { Pedido } from '../../models/pedido.model';
@@ -183,8 +184,34 @@ import { Pedido } from '../../models/pedido.model';
           </div>
         </div>
 
+        <!-- Sin sesión de comensal -->
+        <div *ngIf="idCliente() === null" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
+          <span class="material-symbols-outlined text-4xl text-outline-variant/60">lock</span>
+          <h3 class="font-headline-md text-base font-bold text-on-surface">
+            {{ auth.isAdmin() ? 'Esta sección es para comensales' : 'Inicia sesión para ver tus pedidos' }}
+          </h3>
+          <p class="text-xs text-on-surface-variant max-w-sm mx-auto">
+            {{ auth.isAdmin() ? 'Gestiona todas las comandas desde el Panel Administrativo.' : 'Ingresa con tu cuenta de cliente para seguir tus órdenes en cocina y revisar tu historial.' }}
+          </p>
+          <a
+            *ngIf="auth.isAdmin()"
+            routerLink="/admin/pedidos"
+            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-bold text-xs hover:bg-surface-tint shadow-xs mt-2"
+          >
+            <span>Ir al Panel Admin</span>
+          </a>
+          <a
+            *ngIf="!auth.isAdmin()"
+            routerLink="/login"
+            [queryParams]="{ returnUrl: '/mis-pedidos' }"
+            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-bold text-xs hover:bg-surface-tint shadow-xs mt-2"
+          >
+            <span>Iniciar Sesión</span>
+          </a>
+        </div>
+
         <!-- No active order banner -->
-        <div *ngIf="!pedidoActivo()" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
+        <div *ngIf="idCliente() !== null && !pedidoActivo()" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
           <span class="material-symbols-outlined text-4xl text-outline-variant/60">receipt</span>
           <h3 class="font-headline-md text-base font-bold text-on-surface">No tienes ningún pedido activo en este momento</h3>
           <p class="text-xs text-on-surface-variant max-w-sm mx-auto">
@@ -199,7 +226,7 @@ import { Pedido } from '../../models/pedido.model';
         </div>
 
         <!-- HISTORIAL DE PEDIDOS -->
-        <div class="space-y-4 pt-4">
+        <div *ngIf="idCliente() !== null" class="space-y-4 pt-4">
           <div class="flex items-center justify-between">
             <h2 class="font-display-lg text-xl font-bold text-on-surface">Historial de Pedidos Anteriores</h2>
             <span class="text-xs text-on-surface-variant font-medium">
@@ -265,8 +292,18 @@ export class MisPedidosComponent {
   private pedidosService = inject(PedidosService);
   private cart = inject(CartService);
   private notification = inject(NotificationService);
+  private clientesService = inject(ClientesService);
+  readonly auth = inject(AuthService);
 
-  readonly pedidos = this.pedidosService.pedidos;
+  /** Id de cliente del comensal autenticado (null si no hay sesión de comensal). */
+  readonly idCliente = computed(() => this.clientesService.idClienteDeUsuario(this.auth.currentUser()));
+
+  /** Solo los pedidos del comensal autenticado. */
+  readonly pedidos = computed(() => {
+    const id = this.idCliente();
+    if (id === null) return [];
+    return this.pedidosService.pedidos().filter(p => p.id_cliente === id);
+  });
 
   readonly pedidoActivo = computed(() => {
     return this.pedidos().find(p => p.estado === 'pendiente' || p.estado === 'en_preparacion') || null;

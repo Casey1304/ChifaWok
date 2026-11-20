@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { CartService } from '../../services/cart.service';
 import { PedidosService } from '../../services/pedidos.service';
 import { AuthService } from '../../services/auth.service';
+import { ClientesService } from '../../services/clientes.service';
 import { NotificationService } from '../../services/notification.service';
 import { TipoEntrega } from '../../models/pedido.model';
 
@@ -209,21 +210,34 @@ export class CartDrawerComponent {
     public cart: CartService,
     private pedidosService: PedidosService,
     private auth: AuthService,
+    private clientesService: ClientesService,
     private notification: NotificationService,
     private router: Router
   ) {}
 
   checkout(): void {
-    if (this.cart.items().length === 0) return;
+    if (this.cart.items().length === 0 || this.isSubmitting()) return;
+
+    const user = this.auth.currentUser();
+    const idCliente = this.clientesService.idClienteDeUsuario(user);
+    if (!user || idCliente === null) {
+      // Los pedidos pertenecen a un comensal: sin sesión de cliente no se puede asignar el pedido.
+      this.notification.warning(
+        'Inicia sesión como comensal',
+        'Tu carrito se conserva. Ingresa con tu cuenta de cliente para confirmar el pedido.'
+      );
+      this.closeDrawer.emit();
+      this.router.navigate(['/login'], { queryParams: { returnUrl: this.router.url } });
+      return;
+    }
 
     this.isSubmitting.set(true);
-    const user = this.auth.currentUser();
 
     setTimeout(() => {
       const pedido = this.pedidosService.crearPedido({
-        idCliente: user?.id || 1,
-        clienteNombre: user ? `${user.nombre} ${user.apellido}` : 'Carlos Mendoza (Demo)',
-        clienteTelefono: user?.telefono || '+51 987 654 321',
+        idCliente,
+        clienteNombre: `${user.nombre} ${user.apellido}`,
+        clienteTelefono: user.telefono || '',
         clienteDireccion: this.tipoEntrega() === 'delivery' ? this.direccionEntrega : undefined,
         tipoEntrega: this.tipoEntrega(),
         mesa: this.tipoEntrega() === 'salon' ? this.numeroMesa : undefined,
