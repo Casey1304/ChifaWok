@@ -184,6 +184,32 @@ import { Pedido } from '../../models/pedido.model';
           </div>
         </div>
 
+        <!-- Otros pedidos en curso (además del pedido activo destacado) -->
+        <div *ngIf="otrosActivos().length > 0" class="rounded-2xl border border-outline-variant/40 bg-surface shadow-xs p-4 sm:p-5 space-y-3">
+          <h2 class="font-bold text-sm text-on-surface">Otros pedidos en curso ({{ otrosActivos().length }})</h2>
+          <div
+            *ngFor="let p of otrosActivos()"
+            class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-surface-container-low border border-surface-container text-xs"
+          >
+            <div class="min-w-0">
+              <p class="font-bold text-on-surface">
+                {{ p.codigo }} • {{ p.hora_pedido }}
+                <span class="ml-1 text-[11px] font-semibold text-primary">{{ p.origen === 'voice_ai' ? 'Voice AI Mei' : 'Web' }}</span>
+              </p>
+              <p class="text-on-surface-variant truncate">
+                <span *ngFor="let det of p.detalles; let last = last">{{ det.cantidad }}x {{ det.nombre_producto }}{{ !last ? ', ' : '' }}</span>
+              </p>
+            </div>
+            <div class="flex items-center gap-3 shrink-0">
+              <span class="px-2.5 py-1 rounded-full text-[11px] font-bold"
+                [ngClass]="p.estado === 'pendiente' ? 'bg-amber-100 text-amber-900' : 'bg-blue-100 text-blue-900'">
+                {{ p.estado === 'pendiente' ? '⏳ Recibido' : (p.tiempo_estimado_entrega?.includes('Listo') ? '📦 Listo para despacho' : '🔥 En wok') }}
+              </span>
+              <span class="font-black text-on-surface">S/ {{ p.total.toFixed(2) }}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Sin sesión de comensal -->
         <div *ngIf="idCliente() === null" class="p-8 rounded-2xl border border-dashed border-outline-variant/60 bg-surface text-center space-y-3">
           <span class="material-symbols-outlined text-4xl text-outline-variant/60">lock</span>
@@ -307,6 +333,12 @@ export class MisPedidosComponent {
 
   readonly pedidoActivo = computed(() => {
     return this.pedidos().find(p => p.estado === 'pendiente' || p.estado === 'en_preparacion') || null;
+  });
+
+  /** Pedidos en curso distintos del destacado como "Pedido Activo". */
+  readonly otrosActivos = computed(() => {
+    const activo = this.pedidoActivo();
+    return this.pedidos().filter(p => (p.estado === 'pendiente' || p.estado === 'en_preparacion') && p !== activo);
   });
 
   readonly pedidosHistorial = computed(() => {
