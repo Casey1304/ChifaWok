@@ -168,11 +168,11 @@ import { TipoEntrega } from '../../models/pedido.model';
           <div *ngIf="cart.items().length > 0" class="p-5 border-t border-surface-container bg-surface-container-low/50 space-y-3">
             <div class="space-y-1.5 text-xs text-on-surface-variant">
               <div class="flex justify-between">
-                <span>Subtotal platos:</span>
+                <span>Op. gravada (sin IGV):</span>
                 <span class="font-semibold text-on-surface">S/ {{ cart.subtotal().toFixed(2) }}</span>
               </div>
               <div class="flex justify-between">
-                <span>IGV (18%):</span>
+                <span>IGV (18%) incluido:</span>
                 <span class="font-semibold text-on-surface">S/ {{ cart.impuestos().toFixed(2) }}</span>
               </div>
               <div class="flex justify-between text-base font-black text-on-surface pt-2 border-t border-outline-variant/30">

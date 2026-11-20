@@ -1,6 +1,7 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { StorageService } from './storage.service';
 import { Pedido, EstadoPedido, DetallePedido, TipoEntrega } from '../models/pedido.model';
+import { calcularTotales } from '../utils/totales.util';
 
 @Injectable({
   providedIn: 'root'
@@ -72,9 +73,8 @@ export class PedidosService {
   }): Pedido {
     // Correlativo a partir del mayor id existente (evita colisiones del id aleatorio anterior).
     const id = Math.max(1044, ...this.pedidos().map(p => p.id_pedido)) + 1;
-    const subtotal = datos.detalles.reduce((sum, d) => sum + d.subtotal, 0);
-    const impuestos = Math.round(subtotal * 0.18 * 100) / 100;
-    const total = Math.round((subtotal + impuestos) * 100) / 100;
+    // Los precios de la carta incluyen IGV: se desglosa el impuesto contenido.
+    const { subtotal, impuestos, total } = calcularTotales(datos.detalles.reduce((sum, d) => sum + d.subtotal, 0));
 
     const now = new Date();
     const hora = now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true });

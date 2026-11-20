@@ -169,11 +169,11 @@ import { Pedido } from '../../models/pedido.model';
                 Resumen de Cuenta
               </h4>
               <div class="flex justify-between text-xs text-on-surface-variant">
-                <span>Subtotal:</span>
+                <span>Op. gravada (sin IGV):</span>
                 <span class="font-semibold text-on-surface">S/ {{ activo.subtotal.toFixed(2) }}</span>
               </div>
               <div class="flex justify-between text-xs text-on-surface-variant">
-                <span>Impuestos (IGV 18%):</span>
+                <span>IGV (18%) incluido:</span>
                 <span class="font-semibold text-on-surface">S/ {{ activo.impuestos.toFixed(2) }}</span>
               </div>
               <div class="flex justify-between text-base font-black text-on-surface pt-2 border-t border-outline-variant/30">
