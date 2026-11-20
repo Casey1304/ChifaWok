@@ -170,8 +170,8 @@ export class RegistroComponent {
 
     this.isSubmitting.set(true);
 
-    setTimeout(() => {
-      const res = this.auth.registro(this.registroForm.value);
+    setTimeout(async () => {
+      const res = await this.auth.registro(this.registroForm.value);
       this.isSubmitting.set(false);
 
       if (res.success) {

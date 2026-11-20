@@ -9,6 +9,12 @@ import {
   DEMO_CREDENCIALES,
   PASSWORD_MIN_LENGTH
 } from '../models/auth.model';
+import { generarSal, hashPassword, verificarPassword } from '../utils/hash.util';
+
+interface CredencialLocal {
+  sal: string;
+  hash: string;
+}
 
 /** Contraseñas aceptadas para la cuenta administradora de demostración. */
 const ADMIN_PASSWORDS = [DEMO_CREDENCIALES.ADMIN.password, 'admin123'];
@@ -20,6 +26,8 @@ export class AuthService {
   private readonly USER_KEY = 'current_user';
   /** Clave usada en sessionStorage cuando el usuario no marca «Recordarme». */
   private readonly SESSION_KEY = 'chifawok_current_user';
+  /** Hash y sal de las contraseñas de cuentas registradas (por correo). */
+  private readonly CREDENCIALES_KEY = 'credenciales';
 
   readonly currentUser = signal<Usuario | null>(null);
   readonly isAuthenticated = computed(() => this.currentUser() !== null);
@@ -33,7 +41,7 @@ export class AuthService {
     this.restaurarSesion();
   }
 
-  login(credentials: LoginRequest): { success: boolean; message: string; user?: Usuario } {
+  async login(credentials: LoginRequest): Promise<{ success: boolean; message: string; user?: Usuario }> {
     const email = (credentials.email || '').trim().toLowerCase();
     const password = credentials.password || '';
     const recordar = credentials.recordar !== false;
@@ -74,11 +82,13 @@ export class AuthService {
       return { success: true, message: '¡Bienvenido de nuevo, Carlos!', user };
     }
 
-    // Usuarios registrados desde /registro (persistidos en LocalStorage).
-    // Nota: sin backend no existe verificación real de contraseña para estas cuentas.
+    // Usuarios registrados desde /registro: se verifica el hash SHA-256 con sal guardado al registrarse.
+    // Protección demostrativa: los datos viven en LocalStorage del navegador, no en un servidor.
     const usuarios = this.storage.get<Usuario[]>('usuarios', []);
     const found = usuarios.find(u => u.email.toLowerCase() === email && u.rol === 'CLIENTE');
-    if (found && password.length >= PASSWORD_MIN_LENGTH) {
+    const credencial = this.storage.get<Record<string, CredencialLocal>>(this.CREDENCIALES_KEY, {})[email];
+    if (found && credencial && password.length >= PASSWORD_MIN_LENGTH &&
+        await verificarPassword(password, credencial.sal, credencial.hash)) {
       this.setUserSession(found, recordar);
       return { success: true, message: `Bienvenido, ${found.nombre}`, user: found };
     }
@@ -86,10 +96,15 @@ export class AuthService {
     return { success: false, message: 'Credenciales inválidas. Usa los accesos rápidos de demostración o regístrate.' };
   }
 
-  registro(req: RegistroRequest): { success: boolean; message: string; user?: Usuario } {
+  async registro(req: RegistroRequest): Promise<{ success: boolean; message: string; user?: Usuario }> {
+    const email = req.email.trim().toLowerCase();
     const usuarios = this.storage.get<Usuario[]>('usuarios', []);
-    if (usuarios.some(u => u.email.toLowerCase() === req.email.trim().toLowerCase())) {
+    const reservado = email === DEMO_CREDENCIALES.ADMIN.email || email === DEMO_CREDENCIALES.CLIENTE.email;
+    if (reservado || usuarios.some(u => u.email.toLowerCase() === email)) {
       return { success: false, message: 'El correo electrónico ya se encuentra registrado.' };
+    }
+    if ((req.password || '').length < PASSWORD_MIN_LENGTH) {
+      return { success: false, message: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres.` };
     }
 
     const newUser: Usuario = {
@@ -103,8 +118,14 @@ export class AuthService {
       token: 'mock-jwt-cliente-' + Date.now()
     };
 
+    // Solo se guarda el hash con sal; la contraseña nunca se almacena en texto plano.
+    const sal = generarSal();
+    const credenciales = this.storage.get<Record<string, CredencialLocal>>(this.CREDENCIALES_KEY, {});
+    credenciales[email] = { sal, hash: await hashPassword(req.password, sal) };
+
     usuarios.push(newUser);
     this.storage.set('usuarios', usuarios);
+    this.storage.set(this.CREDENCIALES_KEY, credenciales);
     this.setUserSession(newUser, true);
 
     return { success: true, message: 'Cuenta creada exitosamente. ¡Bienvenido a Chifa Wok!', user: newUser };
@@ -116,8 +137,8 @@ export class AuthService {
   }
 
   // Quick switch between Admin and Client for testing convenience
-  quickSwitchRole(role: RolUsuario): void {
-    const res = this.login({ ...DEMO_CREDENCIALES[role], recordar: true });
+  async quickSwitchRole(role: RolUsuario): Promise<void> {
+    const res = await this.login({ ...DEMO_CREDENCIALES[role], recordar: true });
     if (!res.success) return;
     this.router.navigate([role === 'ADMIN' ? '/admin/pedidos' : '/carta']);
   }
@@ -166,10 +187,18 @@ export class AuthService {
     }
   }
 
+  /**
+   * Valida la sesión guardada: el rol ADMIN solo corresponde a la cuenta administradora
+   * y un comensal debe ser la cuenta demo o un usuario registrado. Así, editar el rol
+   * en el almacenamiento del navegador no concede acceso al panel.
+   */
   private esUsuarioValido(u: Usuario | null): u is Usuario {
-    return !!u &&
-      typeof u.email === 'string' &&
-      typeof u.token === 'string' &&
-      (u.rol === 'ADMIN' || u.rol === 'CLIENTE');
+    if (!u || typeof u.email !== 'string' || typeof u.token !== 'string') return false;
+    const email = u.email.toLowerCase();
+    if (u.rol === 'ADMIN') return email === DEMO_CREDENCIALES.ADMIN.email;
+    if (u.rol !== 'CLIENTE') return false;
+    if (email === DEMO_CREDENCIALES.ADMIN.email) return false;
+    if (email === DEMO_CREDENCIALES.CLIENTE.email) return true;
+    return this.storage.get<Usuario[]>('usuarios', []).some(r => r.email.toLowerCase() === email && r.rol === 'CLIENTE');
   }
 }
