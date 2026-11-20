@@ -16,6 +16,6 @@ export const adminGuard: CanActivateFn = (route, state) => {
     'Acceso Administrativo Requerido',
     'Debes iniciar sesión con credenciales de administrador para ingresar al panel.'
   );
-  router.navigate(['/login'], { queryParams: { returnUrl: state.url } });
-  return false;
+  // Se devuelve un UrlTree para que el router cancele y redirija en una sola navegación.
+  return router.createUrlTree(['/login'], { queryParams: { returnUrl: state.url } });
 };

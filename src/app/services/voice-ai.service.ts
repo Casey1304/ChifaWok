@@ -3,6 +3,7 @@ import { ProductosService } from './productos.service';
 import { MetricasService } from './metricas.service';
 import { Producto } from '../models/producto.model';
 import { SesionVoz } from '../models/sesion-voz.model';
+import { normalizarTexto } from '../utils/texto.util';
 
 export type VoiceState = 'idle' | 'listening' | 'processing' | 'speaking' | 'clarification' | 'ready_to_confirm' | 'error';
 
@@ -248,32 +249,34 @@ export class VoiceAiService {
     const allProducts = this.productosService.productos();
     const matchedItems: InterpretedItem[] = [];
 
-    // Helper to extract quantity
-    const extractQuantity = (text: string, dishKeyword: string): number => {
-      const idx = text.indexOf(dishKeyword);
-      const prefix = text.substring(Math.max(0, idx - 25), idx);
-      if (prefix.includes('2 ') || prefix.includes('dos ') || prefix.includes('par ')) return 2;
-      if (prefix.includes('3 ') || prefix.includes('tres ')) return 3;
-      if (prefix.includes('4 ') || prefix.includes('cuatro ')) return 4;
-      if (prefix.includes('media docena')) return 0.5;
-      if (prefix.includes('docena')) return 1;
+    // Texto normalizado (sin tildes, minúsculas) para comparar con la carta.
+    const normalizado = normalizarTexto(rawText);
+
+    // Helper to extract quantity: analiza solo el fragmento del ítem actual,
+    // es decir, el texto previo al término encontrado y posterior al último separador.
+    const extractQuantity = (text: string, idx: number): number => {
+      let prefix = text.substring(Math.max(0, idx - 25), idx);
+      const corte = Math.max(prefix.lastIndexOf(','), prefix.lastIndexOf(' y '), prefix.lastIndexOf(' mas '));
+      if (corte >= 0) prefix = prefix.substring(corte + 1);
+      const p = ` ${prefix} `;
+      if (p.includes(' media docena ')) return 0.5;
+      if (p.includes(' docena ')) return 1;
+      if (/\s(2|dos|par)\s/.test(p)) return 2;
+      if (/\s(3|tres)\s/.test(p)) return 3;
+      if (/\s(4|cuatro)\s/.test(p)) return 4;
       return 1;
     };
 
     // Match each product
     for (const prod of allProducts) {
-      let isMatch = false;
-      const searchTerms = [prod.nombre.toLowerCase(), ...(prod.sinonimos_voz || []).map(s => s.toLowerCase())];
+      const searchTerms = [prod.nombre, ...(prod.sinonimos_voz || [])].map(t => normalizarTexto(t));
+      const idx = searchTerms
+        .map(term => normalizado.indexOf(term))
+        .filter(i => i >= 0)
+        .reduce((min, i) => Math.min(min, i), Number.POSITIVE_INFINITY);
 
-      for (const term of searchTerms) {
-        if (lower.includes(term)) {
-          isMatch = true;
-          break;
-        }
-      }
-
-      if (isMatch) {
-        const qty = extractQuantity(lower, prod.nombre.toLowerCase().split(' ')[0]);
+      if (idx !== Number.POSITIVE_INFINITY) {
+        const qty = extractQuantity(normalizado, idx);
         matchedItems.push({
           producto: prod,
           cantidad: qty,

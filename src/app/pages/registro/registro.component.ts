@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
+import { PASSWORD_MIN_LENGTH } from '../../models/auth.model';
 import { NotificationService } from '../../services/notification.service';
 
 @Component({
@@ -160,7 +161,7 @@ export class RegistroComponent {
       telefono: ['+51 987 654 321', Validators.required],
       distrito: ['Miraflores', Validators.required],
       direccion: ['', Validators.required],
-      password: ['', [Validators.required, Validators.minLength(4)]]
+      password: ['', [Validators.required, Validators.minLength(PASSWORD_MIN_LENGTH)]]
     });
   }
 

@@ -70,7 +70,8 @@ export class PedidosService {
     origen?: 'voice_ai' | 'web';
     idSesionVoz?: number;
   }): Pedido {
-    const id = 1045 + Math.floor(Math.random() * 900);
+    // Correlativo a partir del mayor id existente (evita colisiones del id aleatorio anterior).
+    const id = Math.max(1044, ...this.pedidos().map(p => p.id_pedido)) + 1;
     const subtotal = datos.detalles.reduce((sum, d) => sum + d.subtotal, 0);
     const impuestos = Math.round(subtotal * 0.18 * 100) / 100;
     const total = Math.round((subtotal + impuestos) * 100) / 100;

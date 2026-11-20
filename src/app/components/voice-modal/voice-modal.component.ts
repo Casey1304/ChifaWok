@@ -6,6 +6,7 @@ import { VoiceAiService } from '../../services/voice-ai.service';
 import { PedidosService } from '../../services/pedidos.service';
 import { CartService } from '../../services/cart.service';
 import { AuthService } from '../../services/auth.service';
+import { ClientesService } from '../../services/clientes.service';
 import { NotificationService } from '../../services/notification.service';
 
 @Component({
@@ -264,6 +265,7 @@ export class VoiceModalComponent {
     private pedidosService: PedidosService,
     private cart: CartService,
     private auth: AuthService,
+    private clientesService: ClientesService,
     private notification: NotificationService,
     private router: Router
   ) {}
@@ -287,6 +289,17 @@ export class VoiceModalComponent {
     if (!order) return;
 
     const user = this.auth.currentUser();
+    const idCliente = this.clientesService.idClienteDeUsuario(user);
+    if (!user || idCliente === null) {
+      // Los pedidos pertenecen a un comensal: sin sesión de cliente no se puede asignar el pedido.
+      this.notification.warning(
+        'Inicia sesión como comensal',
+        'Ingresa con tu cuenta de cliente para que Mei registre tu pedido.'
+      );
+      this.voice.closeModal();
+      this.router.navigate(['/login'], { queryParams: { returnUrl: this.router.url } });
+      return;
+    }
 
     const detalles = order.items.map((i, idx) => ({
       id_detalle: idx + 1,
@@ -299,10 +312,10 @@ export class VoiceModalComponent {
     }));
 
     const nuevo = this.pedidosService.crearPedido({
-      idCliente: user?.id || 1,
-      clienteNombre: user ? `${user.nombre} ${user.apellido}` : 'Carlos Mendoza (Voice AI)',
-      clienteTelefono: user?.telefono || '+51 987 654 321',
-      clienteDireccion: user?.direccion || 'Av. Pardo 450 Dpto 602, Miraflores',
+      idCliente,
+      clienteNombre: `${user.nombre} ${user.apellido}`,
+      clienteTelefono: user.telefono || '',
+      clienteDireccion: user.direccion,
       tipoEntrega: order.tipoEntrega,
       notas: order.notasGenerales,
       detalles: detalles,

@@ -5,6 +5,7 @@ import { AdminSidebarComponent } from '../../components/admin-sidebar/admin-side
 import { ClientesService } from '../../services/clientes.service';
 import { NotificationService } from '../../services/notification.service';
 import { Cliente } from '../../models/cliente.model';
+import { coincideBusqueda } from '../../utils/texto.util';
 
 @Component({
   selector: 'app-admin-clientes',
@@ -131,10 +132,21 @@ import { Cliente } from '../../models/cliente.model';
                   <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-base">search</span>
                   <input
                     type="text"
-                    [(ngModel)]="search"
+                    [ngModel]="search()"
+                    (ngModelChange)="search.set($event)"
                     placeholder="Buscar cliente..."
-                    class="w-full pl-9 pr-3 py-1.5 rounded-xl border border-outline-variant/60 focus:border-primary focus:outline-hidden text-xs bg-surface"
+                    aria-label="Buscar clientes"
+                    class="w-full pl-9 pr-9 py-1.5 rounded-xl border border-outline-variant/60 focus:border-primary focus:outline-hidden text-xs bg-surface"
                   />
+                  <button
+                    *ngIf="search()"
+                    type="button"
+                    (click)="search.set('')"
+                    aria-label="Limpiar búsqueda"
+                    class="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
+                  >
+                    <span class="material-symbols-outlined text-sm">close</span>
+                  </button>
                 </div>
               </div>
 
@@ -209,6 +221,11 @@ import { Cliente } from '../../models/cliente.model';
                         >
                           Ver Ficha
                         </button>
+                      </td>
+                    </tr>
+                    <tr *ngIf="clientesFiltrados().length === 0">
+                      <td colspan="6" class="py-10 px-3 text-center text-xs text-on-surface-variant italic">
+                        No se encontraron clientes con los filtros aplicados.
                       </td>
                     </tr>
                   </tbody>
@@ -316,7 +333,7 @@ import { Cliente } from '../../models/cliente.model';
   `
 })
 export class AdminClientesComponent {
-  search = '';
+  readonly search = signal<string>('');
   readonly filtroNivel = signal<string | null>(null);
   readonly clienteSeleccionado = signal<Cliente | null>(null);
 
@@ -328,15 +345,16 @@ export class AdminClientesComponent {
       list = list.filter(c => c.nivel === nivel);
     }
 
-    const term = this.search.trim().toLowerCase();
-    if (term) {
-      list = list.filter(c =>
-        c.nombre.toLowerCase().includes(term) ||
-        c.apellido.toLowerCase().includes(term) ||
-        c.telefono.includes(term) ||
-        c.distrito.toLowerCase().includes(term) ||
-        c.plato_favorito.toLowerCase().includes(term)
-      );
+    const term = this.search();
+    if (term.trim()) {
+      list = list.filter(c => coincideBusqueda(term, [
+        `${c.nombre} ${c.apellido}`,
+        c.email,
+        c.telefono,
+        c.distrito,
+        c.direccion,
+        c.plato_favorito
+      ]));
     }
 
     return list;

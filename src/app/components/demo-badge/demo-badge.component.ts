@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component, Input, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../services/auth.service';
 import { StorageService } from '../../services/storage.service';
@@ -9,7 +9,8 @@ import { NotificationService } from '../../services/notification.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="fixed bottom-4 left-4 z-40 hidden sm:block">
+    <!-- En el panel admin se desplaza a la derecha del sidebar (w-64) para no tapar «Ver Carta» / «Salir». -->
+    <div class="fixed bottom-4 z-40 hidden sm:block" [ngClass]="enAdmin ? 'left-[17rem]' : 'left-4'">
       <!-- Minimized pill -->
       <div
         *ngIf="isCollapsed()"
@@ -75,6 +76,7 @@ import { NotificationService } from '../../services/notification.service';
   `
 })
 export class DemoBadgeComponent {
+  @Input() enAdmin = false;
   readonly isCollapsed = signal<boolean>(true);
 
   constructor(
