@@ -5,7 +5,8 @@
     "ng": "ng",
     "start": "ng serve --port 4200 --host 0.0.0.0",
     "build": "ng build",
-    "watch": "ng build --watch --configuration development"
+    "watch": "ng build --watch --configuration development",
+    "test": "tsc -p tsconfig.spec.json && node --test \"out-tsc/spec/**/*.spec.js\""
   },
   "private": true,
   "dependencies": {

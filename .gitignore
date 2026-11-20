@@ -1,0 +1,2 @@
+# Salida de compilación de las pruebas unitarias (npm test)
+/out-tsc
